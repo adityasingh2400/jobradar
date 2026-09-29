@@ -33,6 +33,7 @@ function ago(ms) {
   if (d < 60 * DAY) return `${Math.floor(d / DAY)}d`;
   return `${Math.floor(d / (30 * DAY))}mo`;
 }
+const agoText = (ms) => (ms == null ? '—' : ago(ms) === 'now' ? 'just now' : `${ago(ms)} ago`);
 const fmtDate = (ms) => (ms ? new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—');
 const fmtDur = (ms) => (ms < HOUR ? `${Math.max(1, Math.round(ms / MIN))}m` : ms < 2 * DAY ? `${Math.round(ms / HOUR)}h` : `${Math.round(ms / DAY)}d`);
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
@@ -290,7 +291,7 @@ function renderStatus() {
   const who = { mac: 'Mac', actions: 'Cloud', local: 'Local' }[last] || 'Radar';
   const cls = age < 4 * MIN ? 'live' : age < 20 * MIN ? 'ok' : age < 60 * MIN ? 'warn' : 'bad';
   el.classList.add(cls);
-  el.querySelector('span').textContent = `${cls === 'live' ? 'Live' : cls === 'bad' ? 'Stale' : 'Updated'} · ${who} · ${ago(h.at)} ago`;
+  el.querySelector('span').textContent = `${cls === 'live' ? 'Live' : cls === 'bad' ? 'Stale' : 'Updated'} · ${who} · ${agoText(h.at)}`;
   el.title = `Last radar publish ${fmtDate(h.at)} by the ${who} runner. ${h.open?.toLocaleString()} open internships tracked.${S.error ? `\nLast refresh error: ${S.error}` : ''}`;
 }
 
@@ -383,7 +384,8 @@ function renderList() {
     ${S.error ? `<span class="banner bad">Couldn't refresh: ${esc(S.error)}</span>` : ''}
     <span><b>${vis.length.toLocaleString()}</b> matching of ${S.jobs.filter((j) => j.st === 'open').length.toLocaleString()} open</span>
     ${newN ? `<span class="new-count">● ${newN} new</span><button class="linkbtn" data-act="seen">Mark all seen</button>` : ''}
-    <span class="muted">${hourN} in the last hour · ${dayN} today</span>`;
+    <span class="muted">${hourN} in the last hour · ${dayN} today</span>
+    <button class="linkbtn ftoggle" data-act="toggle-filters">${$('#filters').classList.contains('open') ? 'Hide filters' : 'Filters'}</button>`;
   if (!vis.length) {
     list.innerHTML = `<div class="empty">${S.jobs.length ? 'No internships match these filters.' : 'No data yet — the radar publishes within a few minutes of its first run.'}</div>`;
     $('#more').innerHTML = '';
@@ -495,7 +497,7 @@ function openJob(id) {
     <dl class="d-facts">
       <dt>Locations</dt><dd>${esc((j.l || []).join(' · ') || '—')}</dd>
       <dt>Posted</dt><dd>${j.pa ? `${fmtDate(j.pa)} <span class="muted">(${ago(j.pa)} ago)</span>` : '<span class="muted">not published by the source</span>'}</dd>
-      <dt>First seen</dt><dd>${j.b ? '<span class="muted">already open when the radar started watching</span>' : `${fmtDate(j.fs)} <span class="muted">(${ago(j.fs)} ago)</span>`}</dd>
+      <dt>First seen</dt><dd>${j.b ? '<span class="muted">already open when the radar started watching</span>' : `${fmtDate(j.fs)} <span class="muted">(${agoText(j.fs)})</span>`}</dd>
       ${j.st !== 'open' ? `<dt>Closed</dt><dd>${fmtDate(j.ca)}</dd>` : ''}
       ${j.sp ? `<dt>Sponsorship</dt><dd>${esc(j.sp)}</dd>` : ''}
       <dt>Radar id</dt><dd class="mono muted">${esc(j.id)}</dd>
@@ -585,7 +587,7 @@ function cardHtml(it) {
     <div class="c-m">
       ${followUp(it) ? '<span class="flag follow">Follow up</span>' : ''}
       ${dueSoon(it) ? `<span class="flag due">Due ${esc(it.nextDate.slice(5))}</span>` : ''}
-      ${it.applied ? `<span>applied ${ds === 0 ? 'today' : `${ds}d ago`}</span>` : `<span>saved ${ago(it.created)} ago</span>`}
+      ${it.applied ? `<span>applied ${ds === 0 ? 'today' : `${ds}d ago`}</span>` : `<span>saved ${agoText(it.created)}</span>`}
       ${j && j.st !== 'open' ? '<span class="tag closed">closed</span>' : ''}
       ${it.next ? `<span title="${esc(it.next)}">→ ${esc(it.next.length > 28 ? `${it.next.slice(0, 28)}…` : it.next)}</span>` : ''}
     </div>
@@ -611,7 +613,7 @@ function renderBoard() {
   const applied = items.filter((i) => i.applied).length;
   const follow = items.filter(followUp).length;
   const due = items.filter((i) => dueSoon(i) && !CLOSED_STATUSES.has(i.status)).length;
-  $('#pipe-sum').innerHTML = `<b>${items.length}</b> tracked · <b>${applied}</b> applied${follow ? ` · <span class="flag follow">${follow} need a follow-up</span>` : ''}${due ? ` · <span class="flag due">${due} due</span>` : ''} <span class="muted">· drag cards between columns</span>`;
+  $('#pipe-sum').innerHTML = `<b>${items.length}</b> tracked · <b>${applied}</b> applied${follow ? ` · <span class="flag follow">${follow} need a follow-up</span>` : ''}${due ? ` · <span class="flag due">${due} due</span>` : ''} <span class="muted hide-touch">· drag cards between columns</span>`;
 }
 
 // ---------- dashboard ----------
@@ -619,7 +621,7 @@ function median(a) { if (!a.length) return null; const s = [...a].sort((x, y) =>
 function pct(n, d) { return d ? `${Math.round((n / d) * 100)}%` : '—'; }
 function barsHtml(rows, max) {
   const m = max || Math.max(1, ...rows.map((r) => r[1]));
-  return `<div class="bars">${rows.map(([label, v, note]) => `<div class="bar-row" data-tip="${esc(`${label}: ${v}${note ? ` · ${note}` : ''}`)}"><span class="bl">${esc(label)}</span><span class="bt"><span class="bf" style="width:${(v / m) * 100}%"></span></span><span class="bv">${v}${note ? ` <span class="muted">${esc(note)}</span>` : ''}</span></div>`).join('')}</div>`;
+  return `<div class="bars">${rows.map(([label, v, note]) => `<div class="bar-row" data-tip="${esc(`${label}: ${v}${note ? ` · ${note}` : ''}`)}"><span class="bl">${esc(label)}</span><span class="bt"><span class="bf" style="width:${(v / m) * 100}%;${v ? '' : 'display:none'}"></span></span><span class="bv">${v}${note ? ` <span class="muted">${esc(note)}</span>` : ''}</span></div>`).join('')}</div>`;
 }
 function renderDash() {
   const items = Object.values(S.tracker.items).filter((i) => !i.del);
@@ -697,15 +699,16 @@ function renderDash() {
 // ---------- settings ----------
 function renderSettings() {
   const h = S.health;
-  const runner = (name, r) => {
-    if (!r?.at) return `<tr><td>${name}</td><td colspan="3" class="muted">never ran</td></tr>`;
+  const standby = (h?.runners?.mac?.at || 0) > Date.now() - 6 * MIN && (h?.runners?.actions?.at || 0) < (h?.runners?.mac?.at || 0) - 10 * MIN;
+  const runner = (name, r, isCloud = false) => {
+    if (!r?.at || (isCloud && standby)) return `<tr><td><span class="pill idle"><i></i>${name}</span></td><td colspan="3" class="muted">${isCloud && standby ? 'standing by while the Mac is live' : 'not run yet'}</td></tr>`;
     const age = Date.now() - r.at;
     const cls = age < 10 * MIN ? 'good' : age < 60 * MIN ? 'warn' : 'idle';
-    return `<tr><td><span class="pill ${cls}"><i></i>${name}</span></td><td>${ago(r.at)} ago</td><td class="num">${(r.polls ?? 0).toLocaleString()} polls</td><td class="muted">${esc(r.host || '')} ${esc(r.version || '')}</td></tr>`;
+    return `<tr><td><span class="pill ${cls}"><i></i>${name}</span></td><td>${agoText(r.at)}</td><td class="num">${(r.polls ?? 0).toLocaleString()} polls</td><td class="muted">${esc(r.host || '')} ${esc(r.version || '')}</td></tr>`;
   };
   const srcRows = (h?.sources || []).sort((a, b) => (a.group || '').localeCompare(b.group || '') || a.label.localeCompare(b.label)).map((s) => {
     const cls = s.never === s.instances ? 'idle' : s.failing > s.instances / 2 ? 'bad' : s.failing ? 'warn' : 'good';
-    return `<tr><td><span class="pill ${cls}"><i></i>${esc(s.label)}</span></td><td class="muted">${esc(s.group === 'aggregator' ? 'aggregator' : s.kind === 'company' ? 'company site' : 'ATS platform')}</td><td class="num">${s.instances.toLocaleString()}</td><td class="num">${s.healthy.toLocaleString()}</td><td class="num">${s.failing ? s.failing.toLocaleString() : ''}</td><td class="num">${s.items.toLocaleString()}</td><td>${s.lastOk ? `${ago(s.lastOk)} ago` : '—'}</td></tr>`;
+    return `<tr><td><span class="pill ${cls}"><i></i>${esc(s.label)}</span></td><td class="muted">${esc(s.group === 'aggregator' ? 'aggregator' : s.kind === 'company' ? 'company site' : 'ATS platform')}</td><td class="num">${s.instances.toLocaleString()}</td><td class="num">${s.healthy.toLocaleString()}</td><td class="num">${s.failing ? s.failing.toLocaleString() : ''}</td><td class="num">${s.items.toLocaleString()}</td><td>${s.lastOk ? agoText(s.lastOk) : '—'}</td></tr>`;
   }).join('');
   const syncMsg = !S.token ? 'Not connected — your tracker lives only in this browser.'
     : S.sync.state === 'ok' ? `Synced ${ago(S.sync.at)} ago.` : S.sync.state === 'busy' ? 'Syncing…' : S.sync.state === 'error' ? `Sync error: ${esc(S.sync.msg)}` : 'Connected.';
@@ -736,7 +739,7 @@ function renderSettings() {
         <div class="row-inline"><button class="btn" data-act="export-json">Export tracker (JSON)</button><button class="btn" data-act="export-csv">Export pipeline (CSV)</button><label class="btn">Import JSON<input type="file" accept="application/json" data-act="import" hidden></label></div>
       </div>
       <div class="panel span-12"><h3>Runners</h3>
-        <div class="table-wrap"><table class="tbl"><tbody>${runner('Mac (instant, every ~1 min while awake)', h?.runners?.mac)}${runner('GitHub Actions (every ~5 min when the Mac is off)', h?.runners?.actions)}</tbody></table></div>
+        <div class="table-wrap"><table class="tbl"><tbody>${runner('Mac (instant, every ~1 min while awake)', h?.runners?.mac)}${runner('GitHub Actions (every ~5 min when the Mac is off)', h?.runners?.actions, true)}</tbody></table></div>
         <p class="muted" style="margin:10px 0 0;font-size:12.5px">${h ? `${h.open?.toLocaleString()} open internships · ${h.total?.toLocaleString()} tracked incl. recently closed · last publish ${fmtDate(h.at)}` : ''}</p>
       </div>
       <div class="panel span-12"><h3>Sources</h3>
@@ -880,6 +883,7 @@ document.addEventListener('click', (e) => {
     }
     case 'seen': S.seenAt = Date.now(); LS.set('radar.seenAt', S.seenAt); renderView(); return;
     case 'more': S.shown += 150; renderList(); return;
+    case 'toggle-filters': $('#filters').classList.toggle('open'); renderList(); return;
     case 'sync-now': syncNow(); return;
     case 'connect': {
       const v = $('#token-in').value.trim();
