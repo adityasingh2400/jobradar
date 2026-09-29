@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Internship Radar</title>
+<meta name="description" content="Live internship radar: thousands of company career sites and aggregators, polled continuously, with an application tracker.">
+<meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131312" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="style.css">
+<script>
+  try { const t = localStorage.getItem('radar.theme'); if (t === '"light"' || t === '"dark"') document.documentElement.dataset.theme = JSON.parse(t); } catch {}
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="top-row">
+    <a class="brand" href="#" data-tab="radar" aria-label="Internship Radar">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" stroke-width="1.6" opacity=".35"/><circle cx="12" cy="12" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6" opacity=".6"/><path d="M12 12 L19.5 6.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/></svg>
+      <span>Radar</span>
+    </a>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="radar">Radar <span class="count" id="count-radar"></span></button>
+      <button role="tab" data-tab="pipeline">Pipeline <span class="count" id="count-pipeline"></span></button>
+      <button role="tab" data-tab="dash">Dashboard</button>
+      <button role="tab" data-tab="settings" aria-label="Settings">Settings</button>
+    </nav>
+    <button class="status" id="status" data-tab="settings" title="Radar status"><i></i><span>Loading…</span></button>
+  </div>
+  <div class="search-row">
+    <input id="q" type="search" placeholder="Search company, title, location…  ( / )" autocomplete="off" spellcheck="false">
+  </div>
+</header>
+
+<main>
+  <section id="view-radar" class="view" hidden>
+    <div class="filters" id="filters"></div>
+    <div class="summary" id="summary"></div>
+    <div class="list" id="list" role="list"></div>
+    <div class="more" id="more"></div>
+  </section>
+
+  <section id="view-pipeline" class="view" hidden>
+    <div class="pipe-head">
+      <div class="pipe-sum" id="pipe-sum"></div>
+      <button class="btn primary" id="add-app">+ Add application</button>
+    </div>
+    <div class="board" id="board"></div>
+  </section>
+
+  <section id="view-dash" class="view" hidden>
+    <div id="dash"></div>
+  </section>
+
+  <section id="view-settings" class="view" hidden>
+    <div id="settings"></div>
+  </section>
+</main>
+
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-scrim" data-close></div>
+  <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+    <button class="drawer-x" data-close aria-label="Close">✕</button>
+    <div id="drawer-body"></div>
+  </div>
+</aside>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<div class="help" id="help" hidden>
+  <div class="help-card">
+    <h3>Keyboard</h3>
+    <dl>
+      <dt>j / k</dt><dd>next / previous job</dd>
+      <dt>o or Enter</dt><dd>open posting</dd>
+      <dt>Space</dt><dd>details</dd>
+      <dt>s</dt><dd>save to pipeline</dd>
+      <dt>a</dt><dd>mark applied</dd>
+      <dt>x</dt><dd>dismiss</dd>
+      <dt>/</dt><dd>search</dd>
+      <dt>1 2 3 4</dt><dd>Radar · Pipeline · Dashboard · Settings</dd>
+      <dt>Esc</dt><dd>close</dd>
+    </dl>
+    <button class="btn" data-close-help>Got it</button>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

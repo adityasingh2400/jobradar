@@ -1,0 +1,9 @@
+{
+  "repo": "adityasingh2400/jobradar",
+  "dataBranch": "data",
+  "minStart": "2026-11",
+  "keepClosedDays": 30,
+  "macFreshMinutes": 6,
+  "actions": { "budgetSeconds": 210, "concurrency": 32, "minIntervalSeconds": 240 },
+  "mac": { "concurrency": 24, "publishEverySeconds": 45, "heartbeatEverySeconds": 180, "watchlistReloadMinutes": 180 }
+}

@@ -1,0 +1,23 @@
+{
+  "_comment": "Company tiers shown as badges and used to prioritize polling. Edit freely; names are matched case/punctuation-insensitively.",
+  "S": [
+    "OpenAI", "Anthropic", "Google", "Google DeepMind", "DeepMind", "Meta", "Apple", "Microsoft", "Amazon", "Amazon Web Services", "NVIDIA", "Netflix",
+    "Jane Street", "Citadel", "Citadel Securities", "Hudson River Trading", "Two Sigma", "Jump Trading", "D. E. Shaw", "DE Shaw", "Optiver", "IMC Trading", "IMC",
+    "Susquehanna International Group", "SIG", "Five Rings", "Tower Research Capital", "Radix Trading", "Headlands Technologies", "Old Mission",
+    "Stripe", "Databricks", "Palantir", "Palantir Technologies", "Scale AI", "Figma", "Ramp", "Anduril", "Anduril Industries", "SpaceX", "xAI",
+    "Cursor", "Anysphere", "Cognition", "Perplexity", "Perplexity AI", "Mistral AI", "Cohere", "Character.AI", "Thinking Machines Lab", "Safe Superintelligence",
+    "Waymo", "Airbnb", "Notion", "Linear", "Vercel", "Plaid", "Coinbase", "Robinhood", "Snowflake", "Tesla", "Bloomberg", "Roblox", "Discord",
+    "Rippling", "Brex", "Datadog", "Cloudflare", "Uber", "Lyft", "DoorDash", "Pinterest", "Snap", "LinkedIn", "Salesforce", "Adobe", "Duolingo"
+  ],
+  "A": [
+    "Instacart", "Reddit", "Dropbox", "Airtable", "Asana", "Atlassian", "Shopify", "Twilio", "MongoDB", "Elastic", "HashiCorp", "Confluent", "GitLab", "GitHub",
+    "ServiceNow", "Workday", "Intuit", "PayPal", "Block", "Square", "Cash App", "Affirm", "Chime", "SoFi", "Capital One", "Goldman Sachs", "Morgan Stanley", "JPMorgan Chase", "JPMorgan Chase & Co.",
+    "BlackRock", "Point72", "Millennium", "Bridgewater Associates", "AQR", "Akuna Capital", "Virtu Financial", "DRW", "Belvedere Trading", "Wolverine Trading", "Peak6", "Vatic Labs", "Chicago Trading Company",
+    "Qualcomm", "AMD", "Intel", "Arm", "Cisco", "Oracle", "IBM", "VMware", "Broadcom", "Micron", "Texas Instruments", "Samsung", "Sony",
+    "TikTok", "ByteDance", "Zoom", "Slack", "Spotify", "Epic Games", "Riot Games", "Unity", "Electronic Arts", "Activision Blizzard",
+    "Nuro", "Aurora", "Zoox", "Cruise", "Skydio", "Zipline", "Rivian", "Lucid", "Applied Intuition", "Scale", "Hugging Face", "Replit", "Runway", "ElevenLabs",
+    "Glean", "Harvey", "Sierra", "Decagon", "Modal", "Together AI", "Fireworks AI", "Baseten", "Weights & Biases", "Hebbia", "Retool", "Benchling", "Verkada",
+    "Samsara", "Flexport", "Gusto", "Deel", "Mercury", "Faire", "Wealthfront", "Grammarly", "Canva", "Quora", "Yelp", "Etsy", "eBay", "Expedia", "Booking.com",
+    "Palo Alto Networks", "CrowdStrike", "Okta", "Zscaler", "Wiz", "Snyk", "Nextdoor", "Twitch", "Peloton", "Squarespace", "Wayfair", "Chewy", "Visa", "Mastercard", "American Express"
+  ]
+}
