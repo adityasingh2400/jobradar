@@ -16,7 +16,7 @@ class Semaphore {
   }
 }
 
-const DEFAULT_HOST_LIMIT = 3;
+const DEFAULT_HOST_LIMIT = 4;
 const hostLimitOverrides = new Map(Object.entries({
   'boards-api.greenhouse.io': 10,
   'api.lever.co': 6,
@@ -28,7 +28,7 @@ const hostLimitOverrides = new Map(Object.entries({
   'www.linkedin.com': 1,
 }));
 const hostSems = new Map();
-let globalSem = new Semaphore(48);
+let globalSem = new Semaphore(96);
 
 export const stats = { requests: 0, errors: 0, notModified: 0, bytes: 0, byHost: {} };
 

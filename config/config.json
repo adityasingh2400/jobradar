@@ -4,6 +4,6 @@
   "minStart": "2026-11",
   "keepClosedDays": 30,
   "macFreshMinutes": 6,
-  "actions": { "budgetSeconds": 210, "concurrency": 32, "minIntervalSeconds": 240 },
-  "mac": { "concurrency": 24, "publishEverySeconds": 45, "heartbeatEverySeconds": 180, "watchlistReloadMinutes": 180 }
+  "actions": { "budgetSeconds": 210, "concurrency": 64, "minIntervalSeconds": 240 },
+  "mac": { "concurrency": 64, "publishEverySeconds": 45, "heartbeatEverySeconds": 180, "watchlistReloadMinutes": 180 }
 }

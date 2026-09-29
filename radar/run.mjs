@@ -96,6 +96,49 @@ async function runTask(t) {
   }
 }
 
+// Per-source task caps. Without them, slow sources (Workday) fill every slot while waiting on
+// their own rate limits and starve everything else (head-of-line blocking).
+const TASK_CAPS = { gh: 12, lever: 6, ashby: 8, wd: 14, sr: 4, wk: 3, linkedin: 1 };
+const capFor = (a) => a.concurrency ?? TASK_CAPS[a.id] ?? 4;
+
+/** Run tasks round-robin across sources, honoring per-source caps and a global cap. */
+function runPool(tasks, { global, deadline = Infinity, onResult }) {
+  const queues = new Map();
+  for (const t of tasks) {
+    if (!queues.has(t.a.id)) queues.set(t.a.id, []);
+    queues.get(t.a.id).push(t);
+  }
+  const active = new Map();
+  let inflight = 0;
+  return new Promise((resolve) => {
+    const pump = () => {
+      if (Date.now() <= deadline) {
+        let launched = true;
+        while (inflight < global && launched) {
+          launched = false;
+          for (const [id, q] of queues) {
+            if (inflight >= global) break;
+            if (!q.length || (active.get(id) || 0) >= capFor(q[0].a)) continue;
+            const t = q.shift();
+            active.set(id, (active.get(id) || 0) + 1);
+            inflight++;
+            launched = true;
+            runTask(t).then((res) => {
+              onResult(t, res);
+              active.set(id, active.get(id) - 1);
+              inflight--;
+              pump();
+            });
+          }
+        }
+      }
+      const pending = Date.now() <= deadline && [...queues.values()].some((q) => q.length);
+      if (!inflight && !pending) resolve();
+    };
+    pump();
+  });
+}
+
 function sourceSummary(tasks) {
   const by = new Map();
   const now = Date.now();
@@ -188,10 +231,10 @@ async function once() {
   log(`${runner}: ${due.length}/${tasks.length} instances due`);
   const budget = (cfg.actions.budgetSeconds || 210) * 1000;
   const stats = { polls: 0, errors: 0, added: 0, closed: 0 };
-  await http.mapLimit(due, cfg.actions.concurrency || 32, async (t) => {
-    if (Date.now() - started > budget) return;
-    const res = await runTask(t);
-    applyResult(t, res, Date.now(), stats);
+  await runPool(due, {
+    global: cfg.actions.concurrency || 48,
+    deadline: started + budget,
+    onResult: (t, res) => applyResult(t, res, Date.now(), stats),
   });
   const info = { host: hostname(), version: codeVersion(), ...stats, requests: http.stats.requests, notModified: http.stats.notModified, ms: Date.now() - started };
   log(`sweep done: ${JSON.stringify(info)}`);
@@ -207,6 +250,7 @@ async function daemon() {
   let tasks = buildTasks(watch);
   const conc = cfg.mac.concurrency || 24;
   const inflight = new Set();
+  const activeBy = new Map();
   const stats = { polls: 0, errors: 0, added: 0, closed: 0, since: Date.now() };
   let lastPublish = 0;
   let lastTick = Date.now();
@@ -246,14 +290,29 @@ async function daemon() {
 
     if (inflight.size < conc) {
       const due = tasks.filter((t) => !inflight.has(t.key) && dueAt(t) <= now)
-        .sort((a, b) => a.rank - b.rank || dueAt(a) - dueAt(b))
-        .slice(0, conc - inflight.size);
+        .sort((a, b) => a.rank - b.rank || dueAt(a) - dueAt(b));
+      const byAdapter = new Map();
       for (const t of due) {
-        inflight.add(t.key);
-        runTask(t).then((res) => {
-          inflight.delete(t.key);
-          applyResult(t, res, Date.now(), stats);
-        });
+        if (!byAdapter.has(t.a.id)) byAdapter.set(t.a.id, []);
+        byAdapter.get(t.a.id).push(t);
+      }
+      // Round-robin across sources, each within its own cap.
+      let launched = true;
+      while (inflight.size < conc && launched) {
+        launched = false;
+        for (const [id, q] of byAdapter) {
+          if (inflight.size >= conc) break;
+          if (!q.length || (activeBy.get(id) || 0) >= capFor(q[0].a)) continue;
+          const t = q.shift();
+          inflight.add(t.key);
+          activeBy.set(id, (activeBy.get(id) || 0) + 1);
+          launched = true;
+          runTask(t).then((res) => {
+            inflight.delete(t.key);
+            activeBy.set(id, activeBy.get(id) - 1);
+            applyResult(t, res, Date.now(), stats);
+          });
+        }
       }
     }
 
