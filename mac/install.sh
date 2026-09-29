@@ -56,6 +56,8 @@ cat > "$PLIST" <<EOF
 EOF
 
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+# bootout is asynchronous; wait for the old instance to be gone before re-registering.
+for _ in $(seq 1 30); do launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || break; sleep 0.5; done
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 launchctl enable "gui/$(id -u)/$LABEL"
 echo "Installed $LABEL"
