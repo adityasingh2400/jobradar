@@ -21,10 +21,10 @@ const hostLimitOverrides = new Map(Object.entries({
   'boards-api.greenhouse.io': 10,
   'api.lever.co': 6,
   'api.ashbyhq.com': 6,
-  'jobs.ashbyhq.com': 6,
+  'jobs.ashbyhq.com': 10,
   'raw.githubusercontent.com': 6,
   'api.smartrecruiters.com': 4,
-  'apply.workable.com': 3,
+  'apply.workable.com': 1,
   'www.linkedin.com': 1,
 }));
 const hostSems = new Map();

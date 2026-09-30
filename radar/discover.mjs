@@ -68,7 +68,9 @@ function ghCandidates(company, url) {
 const DEAD_CODES = new Set([401, 403, 404, 410, 422]);
 /** A board that has only failed with "gone" codes for days is retired, not retried forever. */
 export function isDead(h, now = Date.now()) {
-  if (!h || !h.fails || h.fails < 5 || !DEAD_CODES.has(h.code)) return false;
+  if (!h || !h.fails) return false;
+  if (!h.ok && h.fails >= 10) return true; // never worked once in 10 tries (moved, unresolvable, ...)
+  if (h.fails < 5 || !DEAD_CODES.has(h.code)) return false;
   return now - (h.ok || 0) > 3 * DAY;
 }
 

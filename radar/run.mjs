@@ -67,7 +67,8 @@ function buildTasks(watch) {
     for (const inst of insts) {
       const tier = inst.tier || (inst.company ? tierOf(inst.company) : '');
       const hot = a.kind !== 'platform' || inst.hot;
-      let interval = hot ? (a.interval || 600) : (a.coldInterval || (a.interval || 600) * 4);
+      // Every site is re-checked at least every 15 min (hot) / 30 min (cold).
+      let interval = hot ? Math.min(a.interval || 600, 900) : Math.min(a.coldInterval || (a.interval || 600) * 2, 1800);
       const eliteIv = ELITE_INTERVAL[a.id] ?? 180;
       if (tier === 'S') interval = Math.min(interval, eliteIv);
       else if (tier === 'A') interval = Math.min(interval, eliteIv * 2);
@@ -91,10 +92,17 @@ function dueAt(t, floorSec = 0) {
   return Math.max(h.ok || 0, h.errAt || 0) + iv;
 }
 
-/** Most important first: rank, then how overdue relative to its own interval (never-polled first). */
+/**
+ * Most overdue first, relative to each task's own interval, with a bonus for important ranks.
+ * (Pure rank ordering starves the long tail: elite/hot boards are always due again.)
+ */
+function score(t, now, floorSec) {
+  const d = dueAt(t, floorSec);
+  if (d === 0) return Infinity; // never polled
+  return (now - d) / (Math.max(t.interval, floorSec) * 1000) + (3 - t.rank) * 0.75;
+}
 function byPriority(now, floorSec = 0) {
-  return (x, y) => x.rank - y.rank
-    || (dueAt(x, floorSec) - now) / (x.interval * 1000) - (dueAt(y, floorSec) - now) / (y.interval * 1000);
+  return (x, y) => score(y, now, floorSec) - score(x, now, floorSec);
 }
 
 async function runTask(t) {
@@ -118,7 +126,7 @@ async function runTask(t) {
 
 // Per-source task caps. Without them, slow sources (Workday) fill every slot while waiting on
 // their own rate limits and starve everything else (head-of-line blocking).
-const TASK_CAPS = { gh: 12, lever: 6, ashby: 8, wd: 14, sr: 4, wk: 3, linkedin: 1 };
+const TASK_CAPS = { gh: 12, lever: 6, ashby: 12, wd: 14, sr: 4, wk: 1, linkedin: 1, 'linkedin-co': 1 };
 const capFor = (a) => a.concurrency ?? TASK_CAPS[a.id] ?? 4;
 
 /** Run tasks round-robin across sources, honoring per-source caps and a global cap. */
