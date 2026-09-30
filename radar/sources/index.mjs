@@ -22,6 +22,7 @@ export async function loadAdapters({ log = console.error } = {}) {
           continue;
         }
         if (ids.has(m.id)) { log(`adapter ${dir}/${f}: duplicate id ${m.id}, skipped`); continue; }
+        if (m.disabled) { m.instances = []; m.seedInstances = []; } // keep canon() for merging, stop polling
         ids.add(m.id);
         m.group = dir;
         m.direct = true;

@@ -35,8 +35,9 @@ export default {
   },
 
   async poll(inst, ctx) {
-    const base = inst.eu ? 'https://boards-api.eu.greenhouse.io' : 'https://boards-api.greenhouse.io';
-    const r = await ctx.http.request(`${base}/v1/boards/${inst.token}/jobs`, { etag: inst.etag });
+    // One API host serves every board, including ones whose pages live on job-boards.eu.greenhouse.io
+    // (there is no boards-api.eu host; it doesn't resolve).
+    const r = await ctx.http.request(`https://boards-api.greenhouse.io/v1/boards/${inst.token}/jobs`, { etag: inst.etag });
     if (r.notModified) return { notModified: true, etag: r.etag };
     const items = [];
     for (const j of r.data.jobs || []) {

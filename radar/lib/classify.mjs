@@ -74,7 +74,7 @@ export function seasonStart(season = '') {
   let m = String(season).match(/^(Winter|Spring|Summer|Fall) (\d{4})$/);
   if (m) return Number(m[2]) * 12 + SEASON_MONTH[m[1]];
   m = String(season).match(/^(\d{4})$/);
-  if (m) return Number(m[1]) * 12 + 6;
+  if (m) return Number(m[1]) * 12 + 12; // year only: could start any time that year (co-ops, rolling)
   return null;
 }
 
@@ -93,10 +93,10 @@ export function isCoop(title = '', season = '') {
 // ---------- categories ----------
 const CAT_RULES = [
   ['quant', /\b(quant|quantitative|trad(ing|er)|algorithmic|market mak(er|ing))\b/i],
-  ['ai', /\b(machine learning|ml|ai|a\.i\.|artificial intelligence|deep learning|research (scientist|engineer|intern|internship)|applied scien\w*|data scien\w*|nlp|natural language|computer vision|llms?|gen ?ai|generative|reinforcement learning|robot learning|perception|mlops|foundation models?|multimodal|recommend(er|ation)s?|autonomy|autonomous|speech|inference|neural)\b/i],
-  ['data', /\b(data (engineer\w*|analy\w*|platform|infrastructure|science|scientist)|analytics|business intelligence|bi engineer|big data|etl)\b/i],
-  ['hw', /\b(hardware|asic|fpga|rtl|vlsi|silicon|chip|soc|embedded|firmware|electrical|electronics?|circuits?|analog|mixed[- ]signal|rf|pcb|verification|robotics|mechatronics|semiconductor|photonics|optical|power electronics|gpu|cpu|computer architecture|dsp)\b/i],
-  ['swe', /\b(software|swe|sde|developer|development engineer|programmer|programming|backend|back[- ]end|frontend|front[- ]end|full[- ]?stack|mobile|ios|android|web|platform|infrastructure|cloud|devops|sre|site reliability|security|cyber\w*|systems?|distributed|compiler|kernel|game|graphics|tools|automation|qa|test engineer|sdet|database|computer science|cs|coding|technology|technical|it)\b/i],
+  ['ai', /\b(machine learning|ml|ai|a\.i\.|artificial intelligence|deep learning|(?<!(market|clinical|policy|legal|economic|user|ux) )research(er|ers)?|applied scien\w*|data scien\w*|nlp|natural language|computer vision|llms?|gen ?ai|generative|reinforcement learning|robot learning|perception|autopilot|self-driving|mlops|foundation models?|multimodal|recommend(er|ation)s?|autonomy|autonomous|speech|inference|neural)\b/i],
+  ['data', /\b(data|analytics|business intelligence|bi engineer|big data|etl)\b/i],
+  ['hw', /\b(data cent(er|re)s?|hardware|asic|fpga|rtl|vlsi|silicon|chip|soc|embedded|firmware|electrical|electronics?|circuits?|analog|mixed[- ]signal|rf|pcb|verification|robotics|mechatronics|semiconductor|photonics|optical|power electronics|gpu|cpu|computer architecture|dsp)\b/i],
+  ['swe', /\b(software|swe|sde|developer|development engineer|programmer|programming|backend|back[- ]end|frontend|front[- ]end|full[- ]?stack|mobile|ios|android|web|platform|infra|infrastructure|cloud|devops|sre|site reliability|security|cyber\w*|systems?|distributed|compiler|kernel|game|graphics|tools|automation|qa|test engineer|sdet|database|computer science|cs|coding|technology|technical|it)\b/i],
   ['pm', /\b(product manag\w*|product intern|associate product|apm|technical program|tpm|program manag\w*|product design\w*|ux|ui\/ux|designer)\b/i],
 ];
 const OTHER_ENG_RE =
@@ -130,6 +130,19 @@ export function categoriesOf(title = '', hint = '') {
 
 export const TECH_CATS = new Set(['swe', 'ai', 'data', 'quant', 'hw', 'pm']);
 
+const TECH_WORD_RE = /\b(engineer\w*|software|developer|data|machine learning|ai|research\w*|scien\w*|quant\w*|technical|technology|product manag\w*|computer|robot\w*|autonom\w*)\b/i;
+
+/**
+ * Titles we can confidently say are not tech (marketing, HR, finance, mechanical engineering, ...).
+ * Direct career-site sources drop these; ambiguous titles ("Autopilot Intern") are kept as 'other'.
+ */
+export function isClearlyNonTech(title = '') {
+  const t = String(title);
+  if (TECH_WORD_RE.test(t) && !OTHER_ENG_RE.test(t)) return false;
+  if (NON_TECH_RE.test(t) && !TECH_WORD_RE.test(t)) return true;
+  return OTHER_ENG_RE.test(t) && !/\b(software|developer|programm\w*|computer|data|machine learning|ai)\b/i.test(t);
+}
+
 // ---------- locations ----------
 const US_STATES = 'AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC';
 const US_STATE_RE = new RegExp(String.raw`(^|,\s*|\s-\s|\s)(${US_STATES})(\s*\d{5})?(\s*,\s*(US|USA|United States))?\s*$`);
@@ -138,16 +151,26 @@ const US_WORDS_RE = /\b(united states|usa|u\.s\.a?\.?|us|america|nyc|sf|bay area
 const CANADA_RE = /\b(canada|toronto|vancouver|montr[eé]al|ottawa|waterloo|calgary|edmonton|winnipeg|halifax|quebec|ontario|british columbia|alberta|kitchener|mississauga|burnaby|victoria, bc)\b|,\s*(ON|BC|QC|AB|MB|NS|NB|SK|NL|PE)(\s*,\s*(CA|Canada))?\s*$/i;
 const INTL_RE = /\b(india|bengaluru|bangalore|hyderabad|pune|chennai|mumbai|delhi|gurgaon|gurugram|noida|london|united kingdom|uk|england|scotland|edinburgh|manchester|ireland|dublin|germany|berlin|munich|m[uü]nchen|hamburg|frankfurt|stuttgart|france|paris|netherlands|amsterdam|switzerland|z[uü]rich|geneva|spain|madrid|barcelona|italy|milan|rome|portugal|lisbon|belgium|brussels|austria|vienna|poland|warsaw|krak[oó]w|wroc[lł]aw|czech|prague|romania|bucharest|hungary|budapest|sweden|stockholm|denmark|copenhagen|norway|oslo|finland|helsinki|estonia|israel|tel aviv|singapore|japan|tokyo|china|shanghai|beijing|shenzhen|hangzhou|guangzhou|hong kong|taiwan|taipei|hsinchu|korea|seoul|australia|sydney|melbourne|new zealand|mexico|guadalajara|brazil|s[aã]o paulo|argentina|buenos aires|chile|colombia|bogot[aá]|costa rica|philippines|manila|vietnam|malaysia|kuala lumpur|indonesia|jakarta|thailand|bangkok|uae|dubai|abu dhabi|saudi|riyadh|egypt|cairo|nigeria|lagos|kenya|nairobi|south africa|cape town|johannesburg|turkey|istanbul|serbia|belgrade|ukraine|kyiv|greece|athens|luxembourg|emea|apac|latam|europe)\b/i;
 
+// Country codes that don't collide with US state abbreviations (so "CO" stays Colorado).
+const INTL_ISO2_TAIL = /,\s*(IE|ES|MX|NZ|GB|UK|FR|CN|JP|KR|SG|AU|BR|NL|PL|IL|CH|SE|IT|PT|BE|AT|DK|NO|FI|CZ|RO|HU|GR|TR|AE|ZA|PH|MY|TH|VN|TW|HK|CL|PE|CR|EG|NG|KE|SK|BG|HR|RS|UA|EE|LV|LT|LU|IS|QA|SA|PK|BD|LK|UY|EC|BO|DO|JM|PR)\s*$/;
+const INTL_ISO3 = /\b(CHN|THA|SGP|MYS|IND|GBR|DEU|FRA|JPN|KOR|AUS|BRA|NLD|POL|ISR|CHE|SWE|ITA|ESP|PRT|BEL|AUT|DNK|NOR|FIN|CZE|ROU|HUN|GRC|TUR|ARE|ZAF|PHL|VNM|IDN|TWN|HKG|ARG|CHL|COL|PER|CRI|MEX|IRL|NZL|SVK|BGR|HRV|SRB|UKR|EST|LVA|LTU|LUX|EGY|MAR|NGA|KEN|PAK|SAU|QAT)\b/;
+const MORE_COUNTRIES_RE = /\b(peru|morocco|qatar|bahrain|kuwait|oman|lebanon|pakistan|bangladesh|sri lanka|nepal|ghana|ethiopia|uganda|tanzania|rwanda|tunisia|algeria|ecuador|uruguay|paraguay|bolivia|venezuela|guatemala|panama|el salvador|honduras|nicaragua|dominican republic|jamaica|iceland|latvia|lithuania|slovakia|slovak republic|slovenia|croatia|bulgaria|cyprus|malta|bosnia|macedonia|albania|belarus|russia|kazakhstan|uzbekistan|armenia|azerbaijan|mongolia|cambodia|myanmar|laos|brunei|macau|macao|mauritius|senegal|cameroon|zambia|zimbabwe|botswana|namibia|angola|mozambique|ivory coast|c[oô]te d'ivoire|trinidad|barbados|bahamas|kosovo|montenegro|moldova|england|wales|northern ireland)\b/i;
+const INTL_WORDS_RE = /\b(kraj|provincia|prov[ií]ncia|prefecture|voivodeship|oblast|bundesland|kanton|departamento|comunidad de madrid|île-de-france|eindhoven|cork|galway|limerick|suzhou|wuxi|tianjin|dalian|chengdu|xi'?an|wuhan|nanjing|quezon|makati|cebu|belo horizonte|campinas|curitiba|monterrey|tijuana|guadalajara|casablanca|aarhus|auckland|wellington|ditzingen|gratkorn|martos|samut prakan|penang|petaling jaya|cyberjaya|johor|hanoi|ho chi minh|kaohsiung|taichung|tainan|yokohama|osaka|kyoto|busan|incheon|pangyo|gurugram|noida|ahmedabad|kolkata|kochi|coimbatore|thiruvananthapuram|mysore|jaipur|chandigarh|lisboa|porto|sevilla|valencia|bilbao|lyon|toulouse|grenoble|nice|sophia antipolis|eschborn|darmstadt|karlsruhe|nuremberg|n[uü]rnberg|cologne|k[oö]ln|d[uü]sseldorf|leipzig|dresden|heidelberg|mannheim|erlangen|wroc[lł]aw|gda[nń]sk|pozna[nń]|brno|ostrava|bratislava|ko[sš]ice|cluj|timi[sș]oara|ia[sș]i|sofia|zagreb|ljubljana|tallinn|riga|vilnius|reykjav[ií]k|gothenburg|g[oö]teborg|malm[oö]|lund|espoo|tampere|bergen|trondheim|odense|aalborg|antwerp|ghent|leuven|rotterdam|utrecht|the hague|den haag|delft|haifa|herzliya|petah tikva|ra'?anana|jerusalem|doha|jeddah|dammam|abu dhabi|sharjah|nairobi|lagos|accra|kigali)\b/i;
+
 /** 'us' | 'remote' | 'ca' | 'intl' | '' */
 export function regionOf(loc = '') {
-  const l = String(loc).trim();
+  const l = String(loc).replace(/<br\s*\/?>/gi, ' ').trim();
   if (!l) return '';
-  const remote = /\bremote\b|\banywhere\b|\bwork from home\b|\bdistributed\b/i.test(l);
-  if (US_STATE_RE.test(l) && !CANADA_RE.test(l)) return 'us';
-  if (/^(US|USA|U\.S\.)\s*[-,:]/i.test(l) || new RegExp(`^(${US_STATES})\\s+[A-Z][a-z]`).test(l)) return 'us';
+  const remote = /\bremote(ly)?\b|\banywhere\b|\bwork from home\b|\bdistributed\b|\bvirtual\b/i.test(l);
+  if (/\b(united states( of america)?|usa|u\.s\.a?\.?)\b/i.test(l) && !CANADA_RE.test(l)) return 'us';
+  if (/\bCAN\b/.test(l) || /\b[A-Z]\d[A-Z] ?\d[A-Z]\d\b/.test(l)) return 'ca';
+  if (US_STATE_RE.test(l) && !CANADA_RE.test(l) && !INTL_ISO2_TAIL.test(l)) return 'us';
   if (CANADA_RE.test(l)) return remote && /\b(us|usa|united states)\b/i.test(l) ? 'us' : 'ca';
-  if (INTL_RE.test(l)) return 'intl';
-  if (US_STATE_NAMES_RE.test(l) || US_WORDS_RE.test(l)) return 'us';
+  if (INTL_RE.test(l) || MORE_COUNTRIES_RE.test(l) || INTL_WORDS_RE.test(l) || INTL_ISO2_TAIL.test(l) || INTL_ISO3.test(l)) return 'intl';
+  // Postal-code shapes: "821 04" (CZ/SK/SE/GR), 6 digits (IN/CN/SG/CR…), UK postcodes, Irish Eircodes.
+  if (/\b\d{3} \d{2}\b|\b\d{6}\b|\b[A-Z]{1,2}\d[A-Z\d]? \d[A-Z]{2}\b|\b[A-Z]\d{2} [A-Z\d]{4}\b/.test(l)) return 'intl';
+  if (/^(US|USA|U\.S\.)\s*[-,:]/i.test(l) || new RegExp(`^(${US_STATES})(\\s+[A-Z][a-z]|-)`).test(l)) return 'us';
+  if (US_STATE_NAMES_RE.test(l) || US_WORDS_RE.test(l) || /\b\d{5}(-\d{4})?\b/.test(l)) return 'us';
   if (remote) return 'remote';
   return '';
 }
@@ -158,7 +181,7 @@ export function regionsOf(locs = []) {
   for (const l of locs) {
     const r = regionOf(l);
     if (r) out[r] = true;
-    if (/\bremote\b/i.test(l)) out.remote = true;
+    if (/\bremote(ly)?\b/i.test(l)) out.remote = true;
   }
   return out;
 }

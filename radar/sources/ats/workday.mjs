@@ -2,7 +2,7 @@
 // so we query "intern" and page while pages are still mostly intern titles.
 
 const u = (s) => { try { return new URL(s); } catch { return null; } };
-const LOCALE = /^[a-z]{2}-[A-Z]{2}$/;
+const LOCALE = /^[a-z]{2}-[a-z]{2}$/i;
 
 function parse(url) {
   const x = u(url);

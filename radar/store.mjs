@@ -41,7 +41,7 @@ export class DataStore {
   /** Fetch the latest data commit and check it out. Returns its sha, or null if the branch doesn't exist yet. */
   pull() {
     try {
-      this.git(['fetch', '-q', '--depth', '1', 'origin', `+refs/heads/${this.branch}:refs/remotes/origin/${this.branch}`], { timeout: 120_000 });
+      this.git(['fetch', '-q', '--depth', '1', 'origin', `+refs/heads/${this.branch}:refs/remotes/origin/${this.branch}`], { timeout: 60_000 });
     } catch (e) {
       const msg = String(e.stderr || e.message);
       if (/couldn't find remote ref|not found/i.test(msg)) { this.base = null; return null; }
@@ -83,7 +83,7 @@ export class DataStore {
     this.git(['commit', '-q', '-m', message]);
     const sha = this.git(['rev-parse', 'HEAD']);
     try {
-      this.git(['push', '-q', 'origin', `HEAD:refs/heads/${this.branch}`, `--force-with-lease=refs/heads/${this.branch}:${this.base || ''}`], { timeout: 180_000 });
+      this.git(['push', '-q', 'origin', `HEAD:refs/heads/${this.branch}`, `--force-with-lease=refs/heads/${this.branch}:${this.base || ''}`], { timeout: 90_000 });
     } catch (e) {
       const msg = String(e.stderr || e.message);
       if (/stale info|rejected|fetch first|non-fast-forward|failed to push/i.test(msg)) return { conflict: true, msg: msg.slice(0, 300) };

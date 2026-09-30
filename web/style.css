@@ -143,6 +143,22 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 main { max-width: 1180px; margin: 0 auto; padding: 14px 16px 80px; }
 
+/* ---------- motto ---------- */
+.motto {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0 14px;
+  font-size: 22px; letter-spacing: -.01em; line-height: 1.25;
+}
+.motto b { font-weight: 720; color: var(--text); }
+.motto .dot { color: var(--accent); font-weight: 700; }
+.motto-stats { font-size: 13px; margin-left: auto; align-self: center; }
+.linkbtn.warn { color: var(--bad-ink); font-weight: 600; }
+.tag.window { color: var(--good-ink); background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 40%, transparent); font-weight: 650; }
+.banner.warnb { color: var(--warn-ink); background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 45%, transparent); margin: 0; padding: 3px 10px; cursor: pointer; font-size: 12.5px; }
+.alert-list { list-style: none; margin: 0 0 12px; padding: 0; font-size: 13px; }
+.alert-list li { padding: 6px 10px; border-radius: 8px; margin-bottom: 6px; }
+.alert-list li.warn { background: var(--warn-soft); color: var(--warn-ink); }
+.alert-list li.info { background: var(--surface-2); color: var(--text-2); }
+
 /* ---------- filters ---------- */
 .filters { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 10px; }
 .fgroup { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
@@ -372,6 +388,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   .board { grid-auto-flow: row; grid-auto-columns: auto; }
   .d-facts { grid-template-columns: 100px 1fr; }
   .grid2 { grid-template-columns: 1fr; }
+  .motto { font-size: 19px; }
+  .motto-stats { margin-left: 0; width: 100%; }
   .filters { gap: 8px; display: none; }
   .filters.open { display: flex; }
   .ftoggle { display: inline; margin-left: auto; }

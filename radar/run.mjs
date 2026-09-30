@@ -9,14 +9,14 @@
 import { hostname } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { readFileSync, appendFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import * as http from './lib/http.mjs';
-import { isInternTitle } from './lib/classify.mjs';
+import { isInternTitle, tierOf, normCompany } from './lib/classify.mjs';
 import { loadAdapters, makeCanonicalizer } from './sources/index.mjs';
 import { Engine } from './engine.mjs';
 import { DataStore } from './store.mjs';
-import { discover, buildPay } from './discover.mjs';
+import { discover, buildPay, isDead } from './discover.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const cfg = JSON.parse(readFileSync(join(ROOT, 'config/config.json'), 'utf8'));
@@ -53,28 +53,48 @@ function loadFromStore() {
 }
 
 // ---------- tasks ----------
+const MIN = 60_000;
+const HOUR = 3_600_000;
+// Elite companies are polled much more often than the long tail.
+const ELITE_INTERVAL = { gh: 60, lever: 60, ashby: 60 };
+const TIERS = JSON.parse(readFileSync(join(ROOT, 'config/tiers.json'), 'utf8'));
+
 function buildTasks(watch) {
   const tasks = [];
   for (const a of adapters) {
     if (a.runners && !a.runners.includes(runner) && runner !== 'local') continue;
     const insts = a.kind === 'platform' ? (watch?.instances || []).filter((i) => i.a === a.id) : (a.instances || []);
     for (const inst of insts) {
+      const tier = inst.tier || (inst.company ? tierOf(inst.company) : '');
       const hot = a.kind !== 'platform' || inst.hot;
-      const interval = hot ? (a.interval || 600) : (a.coldInterval || (a.interval || 600) * 4);
-      const rank = a.group === 'aggregator' ? 0 : a.kind === 'company' ? 1 : hot ? 2 : 3;
-      tasks.push({ a, inst, key: inst.key, interval, rank });
+      let interval = hot ? (a.interval || 600) : (a.coldInterval || (a.interval || 600) * 4);
+      const eliteIv = ELITE_INTERVAL[a.id] ?? 180;
+      if (tier === 'S') interval = Math.min(interval, eliteIv);
+      else if (tier === 'A') interval = Math.min(interval, eliteIv * 2);
+      const rank = a.group === 'aggregator' || tier === 'S' ? 0 : a.kind === 'company' || tier === 'A' ? 1 : hot ? 2 : 3;
+      tasks.push({ a, inst, key: inst.key, interval, rank, tier });
     }
   }
   return tasks;
 }
 
+/** When a task is next due. Failing sources back off, but never for long unless the board is gone. */
 function dueAt(t, floorSec = 0) {
   const h = engine.inst[t.key];
   if (!h || (!h.ok && !h.errAt)) return 0;
-  let iv = Math.max(t.interval, floorSec) * 1000;
-  if (h.fails) iv *= Math.min(2 ** h.fails, 32);
-  if (h.fails >= 5 && [401, 403, 404, 410].includes(h.code)) iv = Math.max(iv, 24 * 3_600_000);
+  const base = Math.max(t.interval, floorSec) * 1000;
+  let iv = base;
+  if (h.fails) {
+    const dead = h.fails >= 5 && [401, 403, 404, 410, 422].includes(h.code);
+    iv = dead ? 12 * HOUR : Math.max(base, Math.min(base * Math.min(2 ** h.fails, 8), (t.rank <= 1 ? 15 : 45) * MIN));
+  }
   return Math.max(h.ok || 0, h.errAt || 0) + iv;
+}
+
+/** Most important first: rank, then how overdue relative to its own interval (never-polled first). */
+function byPriority(now, floorSec = 0) {
+  return (x, y) => x.rank - y.rank
+    || (dueAt(x, floorSec) - now) / (x.interval * 1000) - (dueAt(y, floorSec) - now) / (y.interval * 1000);
 }
 
 async function runTask(t) {
@@ -159,9 +179,75 @@ function sourceSummary(tasks) {
 // ---------- publishing with compare-and-swap + replay ----------
 let journal = []; // [task, result, at] since last successful publish
 
+/** Per elite company: which direct feeds cover it, are they healthy, and what's open. */
+function eliteSummary(tasks) {
+  const now = Date.now();
+  const openBy = new Map();
+  for (const j of engine.jobs.values()) {
+    if (engine.status(j, now).st !== 'open') continue;
+    const k = normCompany(j.c);
+    const e = openBy.get(k) || { n: 0, srcs: new Set() };
+    e.n++;
+    for (const sid of Object.keys(j.src || {})) e.srcs.add(sid);
+    openBy.set(k, e);
+  }
+  const instBy = new Map();
+  for (const t of tasks) {
+    if (isDead(engine.inst[t.key], now)) continue;
+    for (const name of t.inst.names || [t.inst.company || '']) {
+      const k = normCompany(name);
+      if (!k) continue;
+      if (!instBy.has(k)) instBy.set(k, []);
+      instBy.get(k).push(t);
+    }
+  }
+  const seen = new Set();
+  const out = [];
+  for (const name of TIERS.S || []) {
+    const k = normCompany(name);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const ts = instBy.get(k) || [];
+    const open = openBy.get(k);
+    if (!ts.length && !open) continue;
+    const feeds = ts.map((t) => {
+      const h = engine.inst[t.key] || {};
+      const fresh = h.ok && now - h.ok < Math.max(4 * t.interval * 1000, 20 * MIN);
+      return { key: t.key, src: t.a.id, label: t.a.label, ok: h.ok || 0, fails: h.fails || 0, n: h.n ?? null, err: h.err || '', healthy: Boolean(fresh && !h.fails) };
+    });
+    const directFeeds = feeds.filter((f) => !f.src.startsWith('linkedin'));
+    const live = directFeeds.filter((f) => f.healthy).length;
+    const state = !directFeeds.length ? 'aggregators' : live === directFeeds.length ? 'ok' : live ? 'degraded' : 'down';
+    out.push({ name, state, open: open?.n || 0, sources: [...(open?.srcs || [])].sort(), feeds });
+  }
+  return out;
+}
+
+function alertsFrom(tasks, elite) {
+  const now = Date.now();
+  const alerts = [];
+  for (const e of elite) {
+    if (e.state !== 'down') continue;
+    const worst = e.feeds.find((f) => !f.healthy && !f.src.startsWith('linkedin'));
+    const since = Math.max(0, ...e.feeds.filter((f) => !f.src.startsWith('linkedin')).map((f) => f.ok || 0));
+    if (since && now - since < 30 * MIN) continue;
+    alerts.push({ level: 'warn', text: `${e.name}: direct feed ${worst?.label || ''} failing${worst?.err ? ` (${worst.err.slice(0, 80)})` : ''}; covered by aggregators meanwhile` });
+  }
+  for (const t of tasks) {
+    const h = engine.inst[t.key];
+    if (t.a.group === 'aggregator' && !t.a.id.startsWith('linkedin') && h?.fails && now - (h.ok || 0) > 30 * MIN) {
+      alerts.push({ level: 'warn', text: `${t.a.label} feed failing: ${String(h.err || '').slice(0, 80)}` });
+    }
+    if (h?.suspect && t.rank <= 1) alerts.push({ level: 'info', text: `${t.inst.company || t.a.label}: returned far fewer postings than usual; holding closures until confirmed` });
+  }
+  return alerts.slice(0, 12);
+}
+
 async function publish(tasks, runnerInfo, message) {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const files = engine.serialize({ runner, runnerInfo, sources: sourceSummary(tasks) });
+    engine.pruneInstances(new Set(tasks.map((t) => t.key)));
+    const elite = eliteSummary(tasks);
+    const files = engine.serialize({ runner, runnerInfo, sources: sourceSummary(tasks), elite, alerts: alertsFrom(tasks, elite) });
     if (DRY) { log(`dry run: would publish (${(files['jobs.json'].length / 1e6).toFixed(2)} MB jobs)`); return { ok: true }; }
     const r = store.publish(files, message);
     if (r.ok) { journal = []; engine.changed = false; return r; }
@@ -220,14 +306,14 @@ async function once() {
   const macAt = engine.runners?.mac?.at || 0;
   if (runner === 'actions' && !flag('force') && Date.now() - macAt < cfg.macFreshMinutes * 60_000) {
     log(`Mac runner is live (last publish ${Math.round((Date.now() - macAt) / 1000)}s ago); skipping this sweep.`);
+    if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, 'skipped=true\n');
     return;
   }
   const watch = await ensureWatchlist();
   const tasks = buildTasks(watch);
   const floor = runner === 'actions' ? cfg.actions.minIntervalSeconds : 0;
   const now = Date.now();
-  const due = tasks.filter((t) => dueAt(t, floor) <= now)
-    .sort((a, b) => a.rank - b.rank || dueAt(a, floor) - dueAt(b, floor));
+  const due = tasks.filter((t) => dueAt(t, floor) <= now).sort(byPriority(now, floor));
   log(`${runner}: ${due.length}/${tasks.length} instances due`);
   const budget = (cfg.actions.budgetSeconds || 210) * 1000;
   const stats = { polls: 0, errors: 0, added: 0, closed: 0 };
@@ -259,6 +345,45 @@ async function daemon() {
   let publishing = false;
   log(`daemon (${runner}) watching ${tasks.length} instances across ${new Set(tasks.map((t) => t.a.id)).size} sources`);
 
+  // Launch work the moment a slot frees up (not on a timer), round-robin across sources,
+  // each within its own cap, most-overdue first. Nothing starves.
+  let pumpQueued = false;
+  function pump() {
+    if (pumpQueued) return;
+    pumpQueued = true;
+    setImmediate(() => {
+      pumpQueued = false;
+      if (inflight.size >= conc) return;
+      const now = Date.now();
+      const due = tasks.filter((t) => !inflight.has(t.key) && dueAt(t) <= now);
+      if (!due.length) return;
+      due.sort(byPriority(now));
+      const byAdapter = new Map();
+      for (const t of due) {
+        if (!byAdapter.has(t.a.id)) byAdapter.set(t.a.id, []);
+        byAdapter.get(t.a.id).push(t);
+      }
+      let launched = true;
+      while (inflight.size < conc && launched) {
+        launched = false;
+        for (const [id, q] of byAdapter) {
+          if (inflight.size >= conc) break;
+          if (!q.length || (activeBy.get(id) || 0) >= capFor(q[0].a)) continue;
+          const t = q.shift();
+          inflight.add(t.key);
+          activeBy.set(id, (activeBy.get(id) || 0) + 1);
+          launched = true;
+          runTask(t).then((res) => {
+            inflight.delete(t.key);
+            activeBy.set(id, activeBy.get(id) - 1);
+            applyResult(t, res, Date.now(), stats);
+            pump();
+          });
+        }
+      }
+    });
+  }
+
   const doPublish = async () => {
     publishing = true;
     try {
@@ -288,33 +413,7 @@ async function daemon() {
     if (now - lastTick > 120_000) log(`woke up after ${Math.round((now - lastTick) / 1000)}s pause (sleep?)`);
     lastTick = now;
 
-    if (inflight.size < conc) {
-      const due = tasks.filter((t) => !inflight.has(t.key) && dueAt(t) <= now)
-        .sort((a, b) => a.rank - b.rank || dueAt(a) - dueAt(b));
-      const byAdapter = new Map();
-      for (const t of due) {
-        if (!byAdapter.has(t.a.id)) byAdapter.set(t.a.id, []);
-        byAdapter.get(t.a.id).push(t);
-      }
-      // Round-robin across sources, each within its own cap.
-      let launched = true;
-      while (inflight.size < conc && launched) {
-        launched = false;
-        for (const [id, q] of byAdapter) {
-          if (inflight.size >= conc) break;
-          if (!q.length || (activeBy.get(id) || 0) >= capFor(q[0].a)) continue;
-          const t = q.shift();
-          inflight.add(t.key);
-          activeBy.set(id, (activeBy.get(id) || 0) + 1);
-          launched = true;
-          runTask(t).then((res) => {
-            inflight.delete(t.key);
-            activeBy.set(id, activeBy.get(id) - 1);
-            applyResult(t, res, Date.now(), stats);
-          });
-        }
-      }
-    }
+    pump();
 
     const sincePub = now - lastPublish;
     if (!publishing && ((engine.changed && sincePub > (cfg.mac.publishEverySeconds || 45) * 1000) || sincePub > (cfg.mac.heartbeatEverySeconds || 180) * 1000)) {
@@ -333,7 +432,20 @@ async function daemon() {
         const local = execFileSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
         const remote = execFileSync('git', ['-C', ROOT, 'rev-parse', 'origin/main'], { encoding: 'utf8' }).trim();
         if (local !== remote) {
-          log('new code on origin/main: publishing, updating and restarting');
+          // Only switch to new code that passes its own tests; a bad push must not take the runner down.
+          const tmp = join(process.env.HOME, '.jobradar', 'update-check');
+          execFileSync('rm', ['-rf', tmp]);
+          execFileSync('mkdir', ['-p', tmp]);
+          execFileSync('sh', ['-c', `git -C "${ROOT}" archive origin/main | tar -x -C "${tmp}"`], { timeout: 60_000 });
+          try {
+            for (const t of ['test/engine.test.mjs', 'test/classify.test.mjs']) execFileSync(process.execPath, [join(tmp, t)], { cwd: tmp, stdio: 'ignore', timeout: 60_000 });
+            execFileSync(process.execPath, ['-e', `import('${join(tmp, 'radar/sources/index.mjs')}').then(m=>m.loadAdapters({log(){}})).then(a=>{if(a.length<20)process.exit(1)})`], { stdio: 'ignore', timeout: 60_000 });
+          } catch {
+            log(`new code ${remote.slice(0, 7)} failed its tests; staying on ${local.slice(0, 7)}`);
+            lastUpdateCheck = now + 40 * 60_000; // don't re-test the same bad commit constantly
+            throw new Error('update rejected');
+          }
+          log('new code on origin/main passed tests: publishing, updating and restarting');
           if (journal.length) await doPublish();
           execFileSync('git', ['-C', ROOT, 'reset', '-q', '--hard', 'origin/main']);
           process.exit(0); // launchd restarts us on the new code
@@ -341,7 +453,7 @@ async function daemon() {
       } catch (e) { log(`self-update check failed: ${e.message}`); }
     }
 
-    await sleep(2000);
+    await sleep(1000);
   }
 }
 
@@ -349,7 +461,7 @@ async function runDiscover() {
   store.ensure();
   store.pull();
   const prev = store.read('watchlist.json');
-  const watch = await discover({ adapters, http, prev, log });
+  const watch = await discover({ adapters, http, prev, health: store.read('instances.json') || {}, log });
   const pay = await buildPay(http, log);
   if (DRY) { log('dry run: not publishing watchlist'); return; }
   for (let i = 0; i < 5; i++) {

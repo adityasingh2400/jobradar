@@ -5,7 +5,7 @@
 // health.json carries per-instance poll health, ETags, aliases and runner heartbeats.
 
 import {
-  isInternTitle, seasonOf, seasonOk, categoriesOf, TECH_CATS, degreeTag, fuzzyKey, tierOf, regionsOf,
+  isInternTitle, seasonOf, seasonOk, categoriesOf, TECH_CATS, isClearlyNonTech, degreeTag, fuzzyKey, tierOf, regionsOf,
 } from './lib/classify.mjs';
 import { isWeakSid } from './sources/index.mjs';
 
@@ -44,8 +44,30 @@ export class Engine {
     this.alias = health?.alias || {};
     this.inst = instances || health?.inst || {};
     this.runners = health?.runners || {};
+    this.revalidate();
     for (const j of this.jobs.values()) this.#index(j);
     this.changed = false;
+  }
+
+  /** Re-apply the current filters to stored jobs, so rule changes take effect retroactively. */
+  revalidate() {
+    let dropped = 0;
+    for (const [id, j] of this.jobs) {
+      const srcs = Object.keys(j.src || {});
+      const curated = srcs.some((s) => this.adapters.get(s)?.curated);
+      let keep = seasonOk(j.s || seasonOf(j.t), this.cfg.minStart);
+      if (keep && !curated) {
+        const cats = categoriesOf(j.t);
+        keep = cats.some((c) => TECH_CATS.has(c)) || (!isClearlyNonTech(j.t) && Boolean(tierOf(j.c)));
+      }
+      if (!keep) { this.jobs.delete(id); dropped++; }
+    }
+    if (dropped) {
+      for (const [k, v] of Object.entries(this.alias)) if (!this.jobs.has(v)) delete this.alias[k];
+      this.changed = true;
+      this.log(`revalidate: dropped ${dropped} jobs that no longer pass the filters`);
+    }
+    return dropped;
   }
 
   #index(j) {
@@ -66,18 +88,31 @@ export class Engine {
     return (a?.staleDays ?? (srcId === 'linkedin' ? 21 : 3)) * DAY;
   }
 
-  /** open/closed for a job right now, derived from its sources. */
+  /**
+   * open/closed for a job right now, derived from its sources.
+   * - The employer's own system is authoritative: if a complete direct poll says the posting is gone,
+   *   it's closed even if an aggregator still lists it (aggregators lag on removals too).
+   * - A source only counts as "open" while it is fresh: complete sources while their instance keeps
+   *   answering, partial sources (searches, LinkedIn) until their stale window passes.
+   */
   status(j, now = this.now()) {
     let open = false;
+    let directOpen = false;
+    let directClosed = 0;
     let closedAt = 0;
     for (const [srcId, se] of Object.entries(j.src || {})) {
+      const direct = this.adapters.get(srcId)?.direct;
       if (se.o === 1) {
-        if (se.c || now - (se.ls || 0) < this.#staleMs(srcId)) { open = true; break; }
-        closedAt = Math.max(closedAt, (se.ls || 0) + this.#staleMs(srcId));
+        const alive = se.c
+          ? now - Math.max(this.inst[se.i]?.ok || 0, se.ls || 0) < 3 * DAY
+          : now - (se.ls || 0) < this.#staleMs(srcId);
+        if (alive) { open = true; if (direct) directOpen = true; } else closedAt = Math.max(closedAt, (se.ls || 0) + this.#staleMs(srcId));
       } else {
         closedAt = Math.max(closedAt, se.ca || se.ls || 0);
+        if (direct && se.c) directClosed = Math.max(directClosed, se.ca || 0);
       }
     }
+    if (directClosed && !directOpen) return { st: 'closed', ca: directClosed };
     return open ? { st: 'open' } : { st: 'closed', ca: closedAt || now };
   }
 
@@ -115,16 +150,25 @@ export class Engine {
     }
 
     if (result.complete) {
+      let prevOpen = 0;
+      const gone = [];
       for (const id of this.byInst.get(key) || []) {
-        if (seen.has(id)) continue;
-        const j = this.jobs.get(id);
-        const se = j?.src?.[adapter.id];
-        if (se && se.i === key && se.o === 1) {
-          se.o = 0;
-          se.ca = at;
-          out.closed++;
-          this.changed = true;
-        }
+        const se = this.jobs.get(id)?.src?.[adapter.id];
+        if (!se || se.i !== key || se.o !== 1) continue;
+        prevOpen++;
+        if (!seen.has(id)) gone.push(se);
+      }
+      // A source that suddenly returns nothing (or loses most of its postings at once) is far more
+      // likely broken than truthful. Hold the closures until it says the same thing 3 polls in a row.
+      const suspicious = gone.length >= 3 && (result.items.length === 0 || (gone.length >= 10 && gone.length > 0.6 * prevOpen));
+      if (suspicious && (h.suspect || 0) < 2) {
+        h.suspect = (h.suspect || 0) + 1;
+        h.suspectAt = at;
+        out.suspect = gone.length;
+      } else {
+        delete h.suspect; delete h.suspectAt;
+        for (const se of gone) { se.o = 0; se.ca = at; out.closed++; }
+        if (gone.length) this.changed = true;
       }
     }
     return out;
@@ -138,7 +182,10 @@ export class Engine {
     const season = seasonOf(title, it.terms);
     if (!seasonOk(season, this.cfg.minStart)) return null;
     const cats = categoriesOf(title, it.catHint);
-    if (adapter.direct && !cats.some((c) => TECH_CATS.has(c))) return null;
+    // Curated tech lists (Simplify & co.) are trusted as-is. Elsewhere a title with no tech signal is
+    // kept only at tier S/A companies (product-named roles like "Autopilot Intern"), never if it's
+    // clearly non-tech (marketing, finance, mechanical...).
+    if (!adapter.curated && !cats.some((c) => TECH_CATS.has(c)) && (isClearlyNonTech(title) || !tierOf(company))) return null;
 
     let sid = it.sid || this.canon(it.url);
     if (!sid) return null;
@@ -164,6 +211,11 @@ export class Engine {
       } else if (mj && isWeakSid(mj.id) && !isWeakSid(sid)) {
         // We first saw this job on an aggregator page; now we have the employer's posting. Upgrade.
         j = this.#absorb(mj, sid);
+      } else if (mj && mj.id !== sid && this.#sameRoleElsewhere(mj, inst, it, at)) {
+        // Same company + same title from a *different* system (e.g. a company on both Ashby and its
+        // Phenom site, or two Workday sites): one posting, corroborated by two sources.
+        this.alias[sid] = mj.id;
+        j = mj;
       }
     }
 
@@ -220,6 +272,22 @@ export class Engine {
     return j.id;
   }
 
+  #sameRoleElsewhere(mj, inst, it, at) {
+    if (Object.values(mj.src || {}).some((se) => se.i === inst.key)) return false; // same board: distinct reqs
+    const s = this.status(mj, at);
+    if (s.st !== 'open' && at - s.ca > 3 * DAY) return false; // old posting; this is a repost
+    const a = regionsOf(mj.l || []);
+    const b = regionsOf(it.locations || []);
+    const ra = Object.keys(a).filter((k) => a[k]);
+    const rb = Object.keys(b).filter((k) => b[k]);
+    return !ra.length || !rb.length || ra.some((r) => rb.includes(r));
+  }
+
+  /** Forget health for instances no longer on the watchlist. */
+  pruneInstances(activeKeys) {
+    for (const k of Object.keys(this.inst)) if (!activeKeys.has(k)) delete this.inst[k];
+  }
+
   /** Replace a weak (aggregator-page) job with the employer's id, keeping its history. */
   #absorb(weak, sid) {
     const j = { ...weak, id: sid, src: { ...weak.src } };
@@ -253,7 +321,7 @@ export class Engine {
   }
 
   // ---------- serialization ----------
-  serialize({ runner, runnerInfo = {}, sources = [] } = {}) {
+  serialize({ runner, runnerInfo = {}, sources = [], elite = [], alerts = [] } = {}) {
     const now = this.now();
     this.prune(now);
     const rows = [...this.jobs.values()].sort((a, b) => (a.id < b.id ? -1 : 1));
@@ -274,6 +342,8 @@ export class Engine {
       total: rows.length,
       runners: this.runners,
       sources,
+      elite,
+      alerts,
       alias: this.alias,
     };
     const inst = Object.keys(this.inst).sort().map((k) => `${JSON.stringify(k)}:${JSON.stringify(this.inst[k])}`);

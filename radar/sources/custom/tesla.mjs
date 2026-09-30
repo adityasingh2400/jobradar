@@ -15,6 +15,9 @@ const STATE_URL = 'https://www.tesla.com/cua-api/apps/careers/state';
 const JOB_URL = (id) => `https://www.tesla.com/careers/search/job/${id}`;
 
 export default {
+  // www.tesla.com is behind an Akamai bot wall for every non-browser client. Tesla is covered by the
+  // aggregators plus the Tesla LinkedIn company feed instead; canon() still merges tesla.com links.
+  disabled: true,
   id: 'tesla',
   label: 'Tesla Careers',
   kind: 'company',

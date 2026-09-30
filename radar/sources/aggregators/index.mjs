@@ -8,7 +8,7 @@ const RAW = 'https://raw.githubusercontent.com';
 // ---------- SimplifyJobs-format listings.json (Simplify, vanshb03) ----------
 function listingsSource({ id, label, repo, branch = 'dev', interval = 120 }) {
   return {
-    id, label, kind: 'aggregator', interval,
+    id, label, kind: 'aggregator', interval, curated: true,
     instances: [{ key: id, company: '' }],
     canon: () => null,
     async poll(inst, ctx) {
@@ -66,7 +66,7 @@ function monthDayToIso(s, now = new Date()) {
 // speedyapply: | Company | Position | Location | Salary | Posting | Age |
 function speedySource({ id, label, repo }) {
   return {
-    id, label, kind: 'aggregator', interval: 180,
+    id, label, kind: 'aggregator', interval: 180, curated: true,
     instances: [{ key: id, company: '' }],
     canon: () => null,
     async poll(inst, ctx) {
@@ -100,7 +100,7 @@ function speedySource({ id, label, repo }) {
 // jobright: | **[Company](site)** | **[Title](jobright link)** | Location | Work Model | Date Posted |
 function jobrightSource({ id, label, repo }) {
   return {
-    id, label, kind: 'aggregator', interval: 300,
+    id, label, kind: 'aggregator', interval: 300, curated: true,
     instances: [{ key: id, company: '' }],
     canon: () => null,
     async poll(inst, ctx) {
@@ -131,47 +131,71 @@ function jobrightSource({ id, label, repo }) {
   };
 }
 
-// LinkedIn public guest search (no login). Newest-first; great early signal, merged by company+title.
+// LinkedIn public guest search (no login). Newest-first; merged into employer postings by
+// company + title, so it both corroborates direct finds and catches companies we can't poll
+// directly (Tesla, LinkedIn itself, IBM...).
+async function linkedinPoll(inst, ctx) {
+  const items = new Map();
+  const pages = inst.pages || 5;
+  for (let start = 0; start < pages * 10; start += 10) {
+    const q = new URLSearchParams({ keywords: inst.query, location: 'United States', sortBy: 'DD', start: String(start) });
+    if (inst.tpr) q.set('f_TPR', inst.tpr);
+    if (inst.companies) q.set('f_C', inst.companies.join(','));
+    if (start) await new Promise((r) => setTimeout(r, 1500 + Math.random() * 1500));
+    const html = await ctx.http.text(`https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?${q}`, { retries: 1 });
+    const cards = html.match(/<li>[\s\S]*?<\/li>/g) || [];
+    for (const c of cards) {
+      const title = htmlText(c.match(/base-search-card__title">([\s\S]*?)</)?.[1] || '');
+      const company = htmlText(c.match(/base-search-card__subtitle">[\s\S]*?>([\s\S]*?)</)?.[1] || '');
+      const loc = htmlText(c.match(/job-search-card__location">([\s\S]*?)</)?.[1] || '');
+      const when = c.match(/<time[^>]*datetime="([^"]+)"/)?.[1];
+      const ago = htmlText(c.match(/<time[^>]*>([\s\S]*?)</)?.[1] || '');
+      const href = c.match(/href="(https:\/\/[a-z.]*linkedin\.com\/jobs\/view\/[^"?]+)/)?.[1];
+      const jobId = href?.match(/-(\d{8,})$/)?.[1] || href?.match(/(\d{8,})/)?.[1];
+      if (!title || !company || !jobId || !ctx.isInternTitle(title)) continue;
+      items.set(jobId, {
+        title,
+        url: `https://www.linkedin.com/jobs/view/${jobId}`,
+        company,
+        locations: loc ? [loc] : [],
+        postedAt: agoToIso(ago) || (when ? new Date(`${when}T12:00:00Z`).toISOString() : null),
+        intern: true,
+      });
+    }
+    if (cards.length < 10) break;
+  }
+  return { complete: false, items: [...items.values()] };
+}
+
 function linkedinSource() {
   const queries = [
-    'software engineer intern', 'software engineering internship', 'software developer intern',
-    'machine learning intern', 'AI engineer intern', 'research intern machine learning',
-    'data science intern', 'software co-op',
+    'software engineer intern', 'software engineering internship', 'machine learning intern',
+    'AI research intern', 'data science intern', 'software co-op',
   ];
   return {
-    id: 'linkedin', label: 'LinkedIn', kind: 'aggregator', interval: 600, staleDays: 21, runners: ['mac', 'actions'],
-    instances: queries.map((q) => ({ key: `linkedin:${q.replace(/\s+/g, '-')}`, company: '', query: q })),
+    id: 'linkedin', label: 'LinkedIn', kind: 'aggregator', interval: 600, staleDays: 21,
+    instances: queries.map((q) => ({ key: `linkedin:${q.replace(/\s+/g, '-')}`, company: '', query: q, tpr: 'r86400' })),
     canon: () => null,
-    async poll(inst, ctx) {
-      const items = new Map();
-      for (let start = 0; start < 50; start += 10) {
-        const url = `https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=${encodeURIComponent(inst.query)}&location=United%20States&f_TPR=r86400&sortBy=DD&start=${start}`;
-        if (start) await new Promise((r) => setTimeout(r, 1500 + Math.random() * 1500));
-        const html = await ctx.http.text(url, { retries: 1 });
-        const cards = html.match(/<li>[\s\S]*?<\/li>/g) || [];
-        for (const c of cards) {
-          const title = htmlText(c.match(/base-search-card__title">([\s\S]*?)</)?.[1] || '');
-          const company = htmlText(c.match(/base-search-card__subtitle">[\s\S]*?>([\s\S]*?)</)?.[1] || '');
-          const loc = htmlText(c.match(/job-search-card__location">([\s\S]*?)</)?.[1] || '');
-          const when = c.match(/<time[^>]*datetime="([^"]+)"/)?.[1];
-          const ago = htmlText(c.match(/<time[^>]*>([\s\S]*?)</)?.[1] || '');
-          const href = c.match(/href="(https:\/\/[a-z.]*linkedin\.com\/jobs\/view\/[^"?]+)/)?.[1];
-          const jobId = href?.match(/-(\d{8,})$/)?.[1] || href?.match(/(\d{8,})/)?.[1];
-          if (!title || !company || !jobId || !ctx.isInternTitle(title)) continue;
-          const agoIso = agoToIso(ago);
-          items.set(jobId, {
-            title,
-            url: `https://www.linkedin.com/jobs/view/${jobId}`,
-            company,
-            locations: loc ? [loc] : [],
-            postedAt: agoIso || (when ? new Date(`${when}T12:00:00Z`).toISOString() : null),
-            intern: true,
-          });
-        }
-        if (cards.length < 10) break;
-      }
-      return { complete: false, items: [...items.values()] };
-    },
+    poll: linkedinPoll,
+  };
+}
+
+// Company-filtered LinkedIn feeds: a second, independent path for elite companies, and the
+// only live path for ones whose own sites block automated access. IDs are LinkedIn company ids.
+function linkedinCompanySource() {
+  const groups = [
+    ['tesla', { Tesla: 15564 }, 10],
+    ['linkedin-ibm-palantir', { LinkedIn: 1337, IBM: 1009, Palantir: 20708 }, 5],
+    ['microsoft-google', { Microsoft: 1035, Google: 1441 }, 8],
+    ['amazon', { Amazon: 1586 }, 8],
+    ['apple-meta-nvidia', { Apple: 162479, Meta: 10667, NVIDIA: 3608 }, 8],
+    ['netflix-stripe-labs', { Netflix: 165158, Stripe: 2135371, OpenAI: 11130470, Anthropic: 74126343, Databricks: 3477522 }, 5],
+  ];
+  return {
+    id: 'linkedin-co', label: 'LinkedIn (company pages)', kind: 'aggregator', interval: 900, staleDays: 21,
+    instances: groups.map(([key, cos, pages]) => ({ key: `linkedin-co:${key}`, company: '', query: 'intern', companies: Object.values(cos), names: Object.keys(cos), pages })),
+    canon: () => null,
+    poll: linkedinPoll,
   };
 }
 
@@ -182,4 +206,5 @@ export default [
   speedySource({ id: 'speedy-ai', label: 'SpeedyApply AI', repo: 'speedyapply/2027-AI-College-Jobs' }),
   jobrightSource({ id: 'jobright', label: 'Jobright', repo: 'jobright-ai/2026-Software-Engineer-Internship' }),
   linkedinSource(),
+  linkedinCompanySource(),
 ];

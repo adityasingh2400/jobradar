@@ -65,7 +65,14 @@ function ghCandidates(company, url) {
   return [...out].filter((t) => t.length >= 2).slice(0, 10);
 }
 
-export async function discover({ adapters, http, prev = null, log = console.error }) {
+const DEAD_CODES = new Set([401, 403, 404, 410, 422]);
+/** A board that has only failed with "gone" codes for days is retired, not retried forever. */
+export function isDead(h, now = Date.now()) {
+  if (!h || !h.fails || h.fails < 5 || !DEAD_CODES.has(h.code)) return false;
+  return now - (h.ok || 0) > 3 * DAY;
+}
+
+export async function discover({ adapters, http, prev = null, health = {}, log = console.error }) {
   const platforms = adapters.filter((a) => a.kind === 'platform' && typeof a.instanceFromUrl === 'function');
   const companySites = adapters.filter((a) => a.kind === 'company');
   const ownedByCompanyAdapter = (url) => companySites.some((a) => { try { return Boolean(a.canon(url)); } catch { return false; } });
@@ -167,7 +174,9 @@ export async function discover({ adapters, http, prev = null, log = console.erro
 
   const now = Date.now();
   const instances = [];
+  let retired = 0;
   for (const [key, f] of found) {
+    if (isDead(health[key], now)) { retired++; continue; }
     const company = Object.entries(f.names).sort((a, b) => b[1] - a[1])[0]?.[0] || f.inst.company || '';
     const tier = tierOf(company);
     const recentIntern = f.internLast && now - f.internLast < 240 * DAY;
@@ -186,7 +195,7 @@ export async function discover({ adapters, http, prev = null, log = console.erro
   instances.sort((x, y) => (x.key < y.key ? -1 : 1));
   const byAdapter = {};
   for (const i of instances) byAdapter[i.a] = (byAdapter[i.a] || 0) + 1;
-  log(`discover: ${instances.length} instances ${JSON.stringify(byAdapter)}`);
+  log(`discover: ${instances.length} instances ${JSON.stringify(byAdapter)} (${retired} dead boards retired)`);
 
   return { v: 1, generatedAt: now, instances, ghResolved, seedValid, byAdapter };
 }

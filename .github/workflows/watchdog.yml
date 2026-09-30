@@ -1,0 +1,38 @@
+name: watchdog
+# Independent health check. Fails (GitHub emails the repo owner) if the radar's data goes stale or
+# the cloud loop has stopped, and restarts the loop when it has.
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check data freshness and the cloud loop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          health=$(curl -fsSL "https://raw.githubusercontent.com/$REPO/refs/heads/data/health.json")
+          at=$(echo "$health" | jq '.at')
+          age_min=$(( ( $(date +%s) * 1000 - at ) / 60000 ))
+          echo "last publish ${age_min} min ago"
+          echo "$health" | jq -r '.alerts[]? | "alert: \(.text)"'
+          active=$(gh run list --repo "$REPO" --workflow radar.yml --limit 10 --json status \
+            -q '[.[] | select(.status!="completed")] | length')
+          if [ "$active" = "0" ]; then
+            echo "::warning::cloud loop was not running; restarting it"
+            gh workflow run radar.yml --repo "$REPO" --ref main
+          fi
+          if [ "$age_min" -gt 45 ]; then
+            echo "::error::radar data is ${age_min} minutes old"
+            exit 1
+          fi

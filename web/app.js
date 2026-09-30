@@ -36,6 +36,7 @@ function ago(ms) {
 const agoText = (ms) => (ms == null ? '—' : ago(ms) === 'now' ? 'just now' : `${ago(ms)} ago`);
 const fmtDate = (ms) => (ms ? new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—');
 const fmtDur = (ms) => (ms < HOUR ? `${Math.max(1, Math.round(ms / MIN))}m` : ms < 2 * DAY ? `${Math.round(ms / HOUR)}h` : `${Math.round(ms / DAY)}d`);
+const fmtLeft = (ms) => { const m = Math.floor(ms / MIN); return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`; };
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 function normCompany(name = '') {
   return String(name).normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/&/g, ' and ').replace(/\(.*?\)/g, ' ')
@@ -47,8 +48,9 @@ function normCompany(name = '') {
 const CATS = [['swe', 'SWE'], ['ai', 'AI/ML'], ['data', 'Data'], ['quant', 'Quant'], ['hw', 'Hardware'], ['pm', 'Product'], ['other', 'Other']];
 const REGIONS = [['us', 'US'], ['remote', 'Remote'], ['ca', 'Canada'], ['intl', 'Intl'], ['unknown', '?']];
 const SEASONS = [['summer', 'Summer 2027'], ['off', 'Off-season'], ['unknown', 'Unspecified']];
-const AGES = [['all', 'Any age'], ['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours'], ['3d', '3 days'], ['7d', '7 days'], ['30d', '30 days']];
-const AGE_MS = { '1h': HOUR, '6h': 6 * HOUR, '24h': DAY, '3d': 3 * DAY, '7d': 7 * DAY, '30d': 30 * DAY };
+const AGES = [['all', 'Any age'], ['8h', '8-hour window'], ['1h', '1 hour'], ['24h', '24 hours'], ['3d', '3 days'], ['7d', '7 days'], ['30d', '30 days']];
+const APPLY_WINDOW = 8 * HOUR; // the slogan: apply in the first 8 hours
+const AGE_MS = { '8h': APPLY_WINDOW, '1h': HOUR, '6h': 6 * HOUR, '24h': DAY, '3d': 3 * DAY, '7d': 7 * DAY, '30d': 30 * DAY };
 const STATUSES = [
   ['To Apply', '#ECEFF1', '#37474F', '#2b3237', '#c9d3d9'],
   ['Applied', '#D6E4F7', '#1A3E6E', '#1b2a3e', '#9ec5f4'],
@@ -199,6 +201,12 @@ function freshTime(j) {
   if (!j.b) return j.pa && j.fs - j.pa > (dateOnly(j.pa) ? 36 * HOUR : 2 * HOUR) ? j.pa : j.fs;
   return j.pa ?? null;
 }
+/** Time left in the 8-hour apply window, or 0 once it has passed / age is unknown. */
+function windowLeft(j) {
+  if (j._t == null || j.st !== 'open' || (j.b && dateOnly(j.pa))) return 0;
+  const left = APPLY_WINDOW - (Date.now() - j._t);
+  return left > 0 ? left : 0;
+}
 function ageLabel(j) {
   if (j._t == null) return '—';
   if (j.b && dateOnly(j.pa)) {
@@ -337,6 +345,7 @@ const srcLabel = (id) => S.labels[id] || id;
 function rowHtml(j, i) {
   const it = trackItem(j.id);
   const fresh = j._t != null && !(j.b && dateOnly(j.pa)) && Date.now() - j._t < HOUR;
+  const left = windowLeft(j);
   const nw = isNew(j);
   const pay = payFor(j);
   const lead = leadFor(j);
@@ -350,6 +359,7 @@ function rowHtml(j, i) {
       <a class="r-title ${S.tracker.opened[j.id] ? 'visited' : ''}" href="${esc(safeUrl(j.u))}" target="_blank" rel="noopener noreferrer" data-act="open">${esc(j.t)}</a>
       <div class="r-meta">
         ${it ? `<span class="tag status" style="${statusStyle(it.status)}">${esc(it.status)}</span>` : ''}
+        ${left && !(it && it.status !== 'To Apply') ? `<span class="tag window" title="Apply within 8 hours of posting">⏱ ${esc(fmtLeft(left))} left</span>` : ''}
         ${j.st !== 'open' ? '<span class="tag closed">closed</span>' : ''}
         ${j.s ? `<span class="tag">${esc(j.s)}</span>` : ''}
         ${pay ? `<span class="tag pay" title="${esc(pay.title)}">${esc(pay.text)}</span>` : ''}
@@ -379,9 +389,15 @@ function renderList() {
   S.visible = vis;
   const newN = vis.filter(isNew).length;
   const hourN = vis.filter((j) => j._t != null && Date.now() - j._t < HOUR).length;
+  const windowN = vis.filter((j) => windowLeft(j) && !(trackItem(j.id) && trackItem(j.id).status !== 'To Apply')).length;
+  const replyN = Object.values(S.tracker.items).filter((i) => !i.del && i.next === REPLY_TASK && i.nextDate && dayMs(i.nextDate) <= Date.now()).length;
+  $('#motto').innerHTML = `<b>Apply first 8 hours</b><span class="dot">·</span><b>Reply same day</b>
+    <span class="motto-stats">${windowN ? `<button class="linkbtn" data-act="window">${windowN} in the 8-hour window</button>` : '<span class="muted">nothing in the 8-hour window right now</span>'}${replyN ? ` · <button class="linkbtn warn" data-tab="pipeline">${replyN} to reply to today</button>` : ''}</span>`;
   const dayN = vis.filter((j) => j._t != null && Date.now() - j._t < DAY).length;
+  const alerts = (S.health?.alerts || []).filter((a) => a.level === 'warn');
   $('#summary').innerHTML = `
     ${S.error ? `<span class="banner bad">Couldn't refresh: ${esc(S.error)}</span>` : ''}
+    ${alerts.length ? `<button class="banner warnb" data-tab="settings" title="${esc(alerts.map((a) => a.text).join('\n'))}">⚠ ${alerts.length} source${alerts.length > 1 ? 's' : ''} degraded — see Settings</button>` : ''}
     <span><b>${vis.length.toLocaleString()}</b> matching of ${S.jobs.filter((j) => j.st === 'open').length.toLocaleString()} open</span>
     ${newN ? `<span class="new-count">● ${newN} new</span><button class="linkbtn" data-act="seen">Mark all seen</button>` : ''}
     <span class="muted">${hourN} in the last hour · ${dayN} today</span>
@@ -395,7 +411,7 @@ function renderList() {
   let html = '';
   let lastSec = null;
   shown.forEach((j, i) => {
-    const sec = S.filters.sort !== 'new' ? null : isNew(j) ? 'New since last visit' : j._t == null ? 'Already open when the radar started' : Date.now() - j._t < DAY ? 'Last 24 hours' : Date.now() - j._t < 7 * DAY ? 'This week' : 'Earlier';
+    const sec = S.filters.sort !== 'new' ? null : windowLeft(j) ? 'Apply now — inside the 8-hour window' : isNew(j) ? 'New since last visit' : j._t == null ? 'Already open when the radar started' : Date.now() - j._t < DAY ? 'Last 24 hours' : Date.now() - j._t < 7 * DAY ? 'This week' : 'Earlier';
     if (sec && sec !== lastSec) { html += `<div class="sec">${sec}</div>`; lastSec = sec; }
     html += rowHtml(j, i);
   });
@@ -420,10 +436,18 @@ function itemFromJob(j, status) {
     created: now, radarSeen: j._t ?? j.fs, u: now,
   };
 }
+const REPLY_TASK = 'Reply same day';
+const RESPONSE_STAGES = new Set(['OA / Take-Home', 'Recruiter Screen', 'Technical Interview', 'Final / Onsite', 'Offer']);
 function setStatus(it, status) {
   const prev = it.status;
   it.status = status;
   it.updated = today();
+  // They moved: the ball is in your court. Reply the same day.
+  if (RESPONSE_STAGES.has(status) && status !== prev && (!it.next || it.next === REPLY_TASK)) {
+    it.next = REPLY_TASK;
+    it.nextDate = today();
+  }
+  if (CLOSED_STATUSES.has(status) && it.next === REPLY_TASK) { it.next = ''; it.nextDate = ''; }
   if (status !== 'To Apply' && !it.applied) {
     it.applied = today();
     if (it.radarSeen) it.delayH = Math.max(0, Math.round((Date.now() - it.radarSeen) / HOUR * 10) / 10);
@@ -586,7 +610,7 @@ function cardHtml(it) {
     <div class="c-t">${esc(it.title)}</div>
     <div class="c-m">
       ${followUp(it) ? '<span class="flag follow">Follow up</span>' : ''}
-      ${dueSoon(it) ? `<span class="flag due">Due ${esc(it.nextDate.slice(5))}</span>` : ''}
+      ${it.next === REPLY_TASK && dueSoon(it) ? '<span class="flag follow">Reply today</span>' : dueSoon(it) ? `<span class="flag due">Due ${esc(it.nextDate.slice(5))}</span>` : ''}
       ${it.applied ? `<span>applied ${ds === 0 ? 'today' : `${ds}d ago`}</span>` : `<span>saved ${agoText(it.created)}</span>`}
       ${j && j.st !== 'open' ? '<span class="tag closed">closed</span>' : ''}
       ${it.next ? `<span title="${esc(it.next)}">→ ${esc(it.next.length > 28 ? `${it.next.slice(0, 28)}…` : it.next)}</span>` : ''}
@@ -742,6 +766,15 @@ function renderSettings() {
         <div class="table-wrap"><table class="tbl"><tbody>${runner('Mac (instant, every ~1 min while awake)', h?.runners?.mac)}${runner('GitHub Actions (every ~5 min when the Mac is off)', h?.runners?.actions, true)}</tbody></table></div>
         <p class="muted" style="margin:10px 0 0;font-size:12.5px">${h ? `${h.open?.toLocaleString()} open internships · ${h.total?.toLocaleString()} tracked incl. recently closed · last publish ${fmtDate(h.at)}` : ''}</p>
       </div>
+      <div class="panel span-12"><h3>Elite companies <span class="muted" style="font-weight:400">— direct feeds, open internships, and every source that confirms them</span></h3>
+        ${(h?.alerts || []).length ? `<ul class="alert-list">${h.alerts.map((a) => `<li class="${esc(a.level)}">${a.level === 'warn' ? '⚠' : 'ℹ'} ${esc(a.text)}</li>`).join('')}</ul>` : ''}
+        <div class="table-wrap"><table class="tbl"><thead><tr><th>Company</th><th>Direct feed</th><th class="num">Open interns</th><th>Confirmed by</th><th>Last direct success</th></tr></thead><tbody>${(h?.elite || []).map((e) => {
+          const cls = { ok: 'good', degraded: 'warn', down: 'bad', aggregators: 'idle' }[e.state];
+          const label = { ok: 'healthy', degraded: 'partly failing', down: 'failing', aggregators: 'aggregators only' }[e.state];
+          const last = Math.max(0, ...e.feeds.map((f) => f.ok || 0));
+          return `<tr><td><b>${esc(e.name)}</b></td><td><span class="pill ${cls}" title="${esc(e.feeds.map((f) => `${f.label}: ${f.healthy ? 'ok' : f.err || 'stale'}`).join('\n'))}"><i></i>${label}</span> <span class="muted">${esc([...new Set(e.feeds.map((f) => f.label))].join(', '))}</span></td><td class="num">${e.open}</td><td class="muted">${esc(e.sources.map(srcLabel).join(', '))}</td><td>${last ? agoText(last) : '—'}</td></tr>`;
+        }).join('') || '<tr><td colspan="5" class="muted">Loading…</td></tr>'}</tbody></table></div>
+      </div>
       <div class="panel span-12"><h3>Sources</h3>
         <div class="table-wrap"><table class="tbl"><thead><tr><th>Source</th><th>Type</th><th class="num">Sites</th><th class="num">Healthy</th><th class="num">Failing</th><th class="num">Interns (last poll)</th><th>Last success</th></tr></thead><tbody>${srcRows || '<tr><td colspan="7" class="muted">Loading…</td></tr>'}</tbody></table></div>
       </div>
@@ -883,6 +916,7 @@ document.addEventListener('click', (e) => {
     }
     case 'seen': S.seenAt = Date.now(); LS.set('radar.seenAt', S.seenAt); renderView(); return;
     case 'more': S.shown += 150; renderList(); return;
+    case 'window': S.filters.age = S.filters.age === '8h' ? 'all' : '8h'; return filtersChanged();
     case 'toggle-filters': $('#filters').classList.toggle('open'); renderList(); return;
     case 'sync-now': syncNow(); return;
     case 'connect': {
