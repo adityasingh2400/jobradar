@@ -218,7 +218,9 @@ function eliteSummary(tasks) {
     const ts = instBy.get(k) || [];
     const open = openBy.get(k);
     if (!ts.length && !open) continue;
-    const feeds = ts.map((t) => {
+    // A board that answers "gone" (404/410/422) and has never worked is a stale link, not an outage.
+    const gone = (h) => h.fails && [404, 410, 422].includes(h.code) && (!h.ok || now - h.ok > 3 * 24 * HOUR);
+    const feeds = ts.filter((t) => !gone(engine.inst[t.key] || {})).map((t) => {
       const h = engine.inst[t.key] || {};
       const fresh = h.ok && now - h.ok < Math.max(4 * t.interval * 1000, 20 * MIN);
       return { key: t.key, src: t.a.id, label: t.a.label, ok: h.ok || 0, fails: h.fails || 0, n: h.n ?? null, err: h.err || '', healthy: Boolean(fresh && !h.fails) };

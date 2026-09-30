@@ -7,8 +7,8 @@ export default {
   label: 'Workable',
   kind: 'platform',
   direct: true,
-  interval: 600,
-  coldInterval: 1800,
+  interval: 300,
+  coldInterval: 900,
 
   instanceFromUrl(url, company) {
     const x = u(url);
@@ -26,6 +26,28 @@ export default {
   },
 
   async poll(inst, ctx) {
+    // The widget feed is CDN-cached and not rate-limited; the search API (fallback) is strict.
+    try {
+      const d = await ctx.http.json(`https://apply.workable.com/api/v1/widget/accounts/${encodeURIComponent(inst.account)}`);
+      const items = [];
+      for (const j of d.jobs || []) {
+        const intern = /intern|co-?op|apprentice|trainee/i.test(j.employment_type || '');
+        if (!ctx.isInternTitle(j.title) && !intern) continue;
+        const code = String(j.shortcode).toUpperCase();
+        items.push({
+          sid: `wk:${code}`,
+          title: String(j.title).trim(),
+          intern,
+          url: `https://apply.workable.com/${inst.account}/j/${code}/`,
+          company: inst.company || d.name,
+          locations: [[j.city, j.state, j.country].filter(Boolean).join(', '), j.telecommuting ? 'Remote' : ''].filter(Boolean),
+          postedAt: j.published_on || j.created_at || null,
+        });
+      }
+      return { complete: true, items };
+    } catch (e) {
+      if (e.status === 404) throw e;
+    }
     const items = new Map();
     let token;
     for (let page = 0; page < 5; page++) {

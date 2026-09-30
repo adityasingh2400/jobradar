@@ -52,6 +52,11 @@ function limiterKey(host) {
   return host;
 }
 
+// Hosts that told us to back off for a long time (429 + Retry-After): fail fast locally instead of
+// hammering them (which only extends the penalty) until the window passes.
+const cooldownUntil = new Map();
+const LONG_RETRY_AFTER_S = 60;
+
 export class HttpError extends Error {
   constructor(status, url, body = '') {
     super(`HTTP ${status} ${url}`);
@@ -81,6 +86,8 @@ export async function request(url, opts = {}) {
   const key = limiterKey(host);
   const hs = hostSem(key);
   const hstat = (stats.byHost[key] ??= { requests: 0, errors: 0, notModified: 0 });
+  const until = cooldownUntil.get(host) || 0;
+  if (until > Date.now()) throw new HttpError(429, url, `host cooling down for ${Math.round((until - Date.now()) / 60000)} more min`);
 
   await globalSem.acquire();
   await hs.acquire();
@@ -112,6 +119,12 @@ export async function request(url, opts = {}) {
         }
         if (res.status === 429 || res.status >= 500) {
           const txt = await res.text().catch(() => '');
+          const ra = Number(res.headers.get('retry-after'));
+          if (res.status === 429 && Number.isFinite(ra) && ra > LONG_RETRY_AFTER_S) {
+            cooldownUntil.set(host, Date.now() + Math.min(ra, 6 * 3600) * 1000);
+            retryable = false;
+            throw new HttpError(429, url, `rate-limited; cooling down ${Math.round(ra / 60)} min`);
+          }
           if (attempt < retries) { await sleep(backoffMs(attempt, res.headers.get('retry-after'))); continue; }
           retryable = false;
           throw new HttpError(res.status, url, txt);
