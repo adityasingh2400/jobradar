@@ -2,7 +2,7 @@
   "_comment": "Company tiers shown as badges and used to prioritize polling. Edit freely; names are matched case/punctuation-insensitively.",
   "S": [
     "OpenAI", "Anthropic", "Google", "Google DeepMind", "DeepMind", "Meta", "Apple", "Microsoft", "Amazon", "Amazon Web Services", "NVIDIA", "Netflix",
-    "Jane Street", "Citadel", "Citadel Securities", "Hudson River Trading", "Two Sigma", "Jump Trading", "D. E. Shaw", "DE Shaw", "Optiver", "IMC Trading", "IMC",
+    "Jane Street", "Citadel", "Citadel Securities", "Hudson River Trading", "Two Sigma", "Jump Trading", "D. E. Shaw", "DE Shaw", "D.E. Shaw", "Optiver", "IMC Trading", "IMC",
     "Susquehanna International Group", "SIG", "Five Rings", "Tower Research Capital", "Radix Trading", "Headlands Technologies", "Old Mission",
     "Stripe", "Databricks", "Palantir", "Palantir Technologies", "Scale AI", "Figma", "Ramp", "Anduril", "Anduril Industries", "SpaceX", "xAI",
     "Cursor", "Anysphere", "Cognition", "Perplexity", "Perplexity AI", "Mistral AI", "Cohere", "Character.AI", "Thinking Machines Lab", "Safe Superintelligence",
