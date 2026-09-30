@@ -11,6 +11,9 @@ import { isWeakSid } from './sources/index.mjs';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
+// Bump whenever filtering/classification rules change. The first poll of each source under new
+// rules is a baseline: jobs the new rules newly accept are not reported as fresh postings.
+export const RULES_VERSION = 2;
 
 const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 const ms = (iso) => {
@@ -134,7 +137,8 @@ export class Engine {
       return out;
     }
 
-    const bootstrap = !h.ok; // first successful poll of this instance: nothing it has is "new"
+    // First successful poll of this instance, or first under new rules: nothing it has is "new".
+    const bootstrap = !h.ok || h.rv !== RULES_VERSION;
     h.ok = at;
     h.fails = 0;
     delete h.err; delete h.errAt; delete h.code;
@@ -142,6 +146,7 @@ export class Engine {
     if (result.ms != null) h.ms = result.ms;
     if (result.notModified) return out;
     h.n = result.items.length;
+    h.rv = RULES_VERSION;
 
     const seen = new Set();
     for (const it of result.items) {

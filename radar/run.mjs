@@ -475,6 +475,30 @@ async function runDiscover() {
   throw new Error('could not publish watchlist');
 }
 
+/** Maintenance: jobs first seen since --since that weren't recently posted are re-marked as baseline. */
+async function runRebaseline() {
+  const since = Date.parse(opt('since', ''));
+  if (!Number.isFinite(since)) throw new Error('--since <ISO time> required');
+  store.ensure();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    store.pull();
+    loadFromStore();
+    let n = 0;
+    for (const j of engine.jobs.values()) {
+      if (j.b || j.fs < since) continue;
+      if (j.pa && j.fs - j.pa < 12 * HOUR) continue; // genuinely fresh posting
+      j.b = 1;
+      n++;
+    }
+    const prevHealth = store.read('health.json') || {};
+    const files = engine.serialize({ sources: prevHealth.sources, elite: prevHealth.elite, alerts: prevHealth.alerts });
+    const r = store.publish(files, `maintenance: re-baseline ${n} jobs first seen since ${new Date(since).toISOString()}`);
+    if (r.ok) { log(`re-baselined ${n} jobs`); return; }
+    await sleep(1000);
+  }
+  throw new Error('rebaseline: could not publish');
+}
+
 async function runSquash() {
   store.ensure();
   for (let i = 0; i < 5; i++) {
@@ -492,6 +516,7 @@ try {
   else if (mode === 'daemon') await daemon();
   else if (mode === 'discover') await runDiscover();
   else if (mode === 'squash') await runSquash();
+  else if (mode === 'rebaseline') await runRebaseline();
   else { console.error(`unknown mode ${mode}`); process.exit(2); }
 } catch (e) {
   log('fatal:', e?.stack || e);
