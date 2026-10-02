@@ -75,8 +75,10 @@ const SOURCES = ['Company Site', 'Referral', 'Recruiter Reached Out', 'LinkedIn'
 const PRIORITIES = ['Dream', 'High', 'Medium', 'Low'];
 const DEFAULT_FILTERS = {
   seasons: ['summer', 'off', 'unknown'], cats: ['swe', 'ai'], regions: ['us', 'remote', 'unknown'],
-  tier: 'all', age: 'all', hideGrad: true, hideDone: true, openOnly: true, sort: 'new',
+  tier: 'all', age: 'all', hideGrad: true, hideDone: true, openOnly: true, bayOnly: false, sort: 'new',
 };
+const BAY_RE = /\b(san francisco|sf|bay area|silicon valley|palo alto|mountain view|menlo park|sunnyvale|san jose|santa clara|cupertino|redwood city|redwood shores|san mateo|foster city|south san francisco|burlingame|san bruno|millbrae|oakland|berkeley|emeryville|alameda|fremont|newark|union city|hayward|milpitas|los gatos|saratoga|campbell|los altos|pleasanton|livermore|san ramon|dublin, ca|walnut creek|san carlos|belmont|brisbane|daly city|richmond, ca|novato|san rafael)\b/i;
+const isBay = (j) => (j.l || []).some((l) => BAY_RE.test(l));
 
 function isDark() {
   const t = document.documentElement.dataset.theme;
@@ -181,6 +183,7 @@ function ingest(jobs, health) {
     j._cats = j.k || [];
     j._rg = j.rg ? j.rg.split(',') : [];
     j._grad = j.dg === 'phd' || j.dg === 'ms' || j.dg === 'mba';
+    j._bay = isBay(j);
     j._search = `${j.c} ${j.t} ${(j.l || []).join(' ')} ${j.s || ''}`.toLowerCase();
     const srcs = Object.entries(j.src || {}).sort((a, b) => a[1].fs - b[1].fs);
     j._srcs = srcs;
@@ -237,6 +240,7 @@ function matches(j, f = S.filters) {
   if (f.tier === 'S' && j.tr !== 'S') return false;
   if (f.tier === 'SA' && !j.tr) return false;
   if (f.hideGrad && j._grad) return false;
+  if (f.bayOnly && !j._bay) return false;
   if (f.age !== 'all' && (j._t == null || Date.now() - j._t > AGE_MS[f.age])) return false;
   if (f.hideDone) {
     if (S.tracker.dismissed[j.id]) return false;
@@ -256,7 +260,16 @@ function visibleJobs() {
   const f = S.filters;
   if (f.sort === 'tier') out.sort((a, b) => (tierRank(a) - tierRank(b)) || ((b._t || 0) - (a._t || 0)));
   else if (f.sort === 'company') out.sort((a, b) => a.c.localeCompare(b.c) || ((b._t || 0) - (a._t || 0)));
-  else out.sort((a, b) => ((b._t || 0) - (a._t || 0)) || (b.fs - a.fs));
+  else {
+    // Newest first, except inside the 8-hour apply window: most prestigious first (S, A, rest),
+    // Bay Area breaking ties, then newest. The best fresh roles are always at the top.
+    out.sort((a, b) => {
+      const wa = windowLeft(a) > 0, wb = windowLeft(b) > 0;
+      if (wa !== wb) return wa ? -1 : 1;
+      if (wa) return (tierRank(a) - tierRank(b)) || (Number(b._bay) - Number(a._bay)) || ((b._t || 0) - (a._t || 0));
+      return ((b._t || 0) - (a._t || 0)) || (b.fs - a.fs);
+    });
+  }
   return out;
 }
 const tierRank = (j) => (j.tr === 'S' ? 0 : j.tr === 'A' ? 1 : 2);
@@ -317,7 +330,7 @@ function renderFilters() {
     <div class="fgroup"><label>Tier</label>${chip('All', f.tier === 'all', 'data-tier="all"')}${chip('S', f.tier === 'S', 'data-tier="S"')}${chip('S + A', f.tier === 'SA', 'data-tier="SA"')}</div>
     <div class="fgroup"><label>Age</label><select class="fsel" data-sel="age">${AGES.map(([v, l]) => `<option value="${v}" ${f.age === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select class="fsel" data-sel="sort"><option value="new" ${f.sort === 'new' ? 'selected' : ''}>Newest first</option><option value="tier" ${f.sort === 'tier' ? 'selected' : ''}>Tier first</option><option value="company" ${f.sort === 'company' ? 'selected' : ''}>Company A–Z</option></select></div>
-    <div class="fgroup">${chip('Hide PhD/MS/MBA', f.hideGrad, 'data-toggle="hideGrad"')}${chip('Hide applied & dismissed', f.hideDone, 'data-toggle="hideDone"')}${chip('Open only', f.openOnly, 'data-toggle="openOnly"')}</div>`;
+    <div class="fgroup">${chip('Bay Area only', f.bayOnly, 'data-toggle="bayOnly"')}${chip('Hide PhD/MS/MBA', f.hideGrad, 'data-toggle="hideGrad"')}${chip('Hide applied & dismissed', f.hideDone, 'data-toggle="hideDone"')}${chip('Open only', f.openOnly, 'data-toggle="openOnly"')}</div>`;
 }
 
 function locSummary(l = []) {
@@ -411,7 +424,7 @@ function renderList() {
   let html = '';
   let lastSec = null;
   shown.forEach((j, i) => {
-    const sec = S.filters.sort !== 'new' ? null : windowLeft(j) ? 'Apply now — inside the 8-hour window' : isNew(j) ? 'New since last visit' : j._t == null ? 'Already open when the radar started' : Date.now() - j._t < DAY ? 'Last 24 hours' : Date.now() - j._t < 7 * DAY ? 'This week' : 'Earlier';
+    const sec = S.filters.sort !== 'new' ? null : windowLeft(j) ? 'Apply now — inside the 8-hour window, most prestigious first' : isNew(j) ? 'New since last visit' : j._t == null ? 'Already open when the radar started' : Date.now() - j._t < DAY ? 'Last 24 hours' : Date.now() - j._t < 7 * DAY ? 'This week' : 'Earlier';
     if (sec && sec !== lastSec) { html += `<div class="sec">${sec}</div>`; lastSec = sec; }
     html += rowHtml(j, i);
   });
