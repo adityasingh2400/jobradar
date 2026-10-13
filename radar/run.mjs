@@ -4,6 +4,8 @@
 //   node radar/run.mjs daemon   --runner mac       continuous per-source scheduling (always-on Mac)
 //   node radar/run.mjs discover                    rebuild the watchlist + pay data
 //   node radar/run.mjs squash                      collapse data-branch history
+//   node radar/run.mjs rebaseline --since <ISO>    re-mark mislabeled "new" jobs as baseline
+//   node radar/run.mjs backfill-live --since <ISO> stamp board-appearance times on recent jobs
 // Flags: --data-dir <dir>  --dry (never push)  --self-update (daemon: follow origin/main)
 
 import { hostname } from 'node:os';
@@ -498,6 +500,7 @@ async function runRebaseline() {
       if (j.b || j.fs < since) continue;
       if (j.pa && j.fs - j.pa < 12 * HOUR) continue; // genuinely fresh posting
       j.b = 1;
+      delete j.lv;
       n++;
     }
     const prevHealth = store.read('health.json') || {};
@@ -507,6 +510,37 @@ async function runRebaseline() {
     await sleep(1000);
   }
   throw new Error('rebaseline: could not publish');
+}
+
+/**
+ * Maintenance: stamp `lv` (went up on the employer's board) on jobs first seen since --since whose
+ * first source was the employer's complete listing. Recovers reposts that were dated by a stale
+ * "first published" before the engine tracked board appearances.
+ */
+async function runBackfillLive() {
+  const since = Date.parse(opt('since', ''));
+  if (!Number.isFinite(since)) throw new Error('--since <ISO time> required');
+  const direct = new Set(adapters.filter((a) => a.direct).map((a) => a.id));
+  store.ensure();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    store.pull();
+    loadFromStore();
+    let n = 0;
+    for (const j of engine.jobs.values()) {
+      if (j.b || j.lv || j.fs < since) continue;
+      const first = Object.entries(j.src || {}).sort((a, b) => a[1].fs - b[1].fs)[0];
+      if (!first || !direct.has(first[0]) || first[1].c !== 1 || first[1].fs - j.fs > 5 * MIN) continue;
+      j.lv = first[1].fs;
+      n++;
+    }
+    engine.changed = true;
+    const prevHealth = store.read('health.json') || {};
+    const files = engine.serialize({ sources: prevHealth.sources, elite: prevHealth.elite, alerts: prevHealth.alerts });
+    const r = store.publish(files, `maintenance: board-appearance time on ${n} jobs first seen since ${new Date(since).toISOString()}`);
+    if (r.ok) { log(`backfilled ${n} jobs`); return; }
+    await sleep(1000);
+  }
+  throw new Error('backfill-live: could not publish');
 }
 
 async function runSquash() {
@@ -527,6 +561,7 @@ try {
   else if (mode === 'discover') await runDiscover();
   else if (mode === 'squash') await runSquash();
   else if (mode === 'rebaseline') await runRebaseline();
+  else if (mode === 'backfill-live') await runBackfillLive();
   else { console.error(`unknown mode ${mode}`); process.exit(2); }
 } catch (e) {
   log('fatal:', e?.stack || e);

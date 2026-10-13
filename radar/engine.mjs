@@ -14,6 +14,8 @@ const DAY = 24 * HOUR;
 // Bump whenever filtering/classification rules change. The first poll of each source under new
 // rules is a baseline: jobs the new rules newly accept are not reported as fresh postings.
 export const RULES_VERSION = 2;
+const LIVE_GAP = 2 * HOUR;    // a board unpolled for longer than this can't time what appears on it
+const REOPEN_GAP = 12 * HOUR; // gone at least this long, then back: a reopen, not a flaky poll
 
 const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 const ms = (iso) => {
@@ -139,6 +141,9 @@ export class Engine {
 
     // First successful poll of this instance, or first under new rules: nothing it has is "new".
     const bootstrap = !h.ok || h.rv !== RULES_VERSION;
+    // The employer's complete listing, watched without a gap: anything that shows up on it just went up,
+    // whatever "posted" date it carries (reposts and reopens keep their original, sometimes years-old, date).
+    const live = !bootstrap && adapter.direct && !!result.complete && at - h.ok < LIVE_GAP;
     h.ok = at;
     h.fails = 0;
     delete h.err; delete h.errAt; delete h.code;
@@ -150,7 +155,7 @@ export class Engine {
 
     const seen = new Set();
     for (const it of result.items) {
-      const id = this.#upsert(adapter, inst, it, at, bootstrap, out, !!result.complete);
+      const id = this.#upsert(adapter, inst, it, at, bootstrap, out, !!result.complete, live);
       if (id) seen.add(id);
     }
 
@@ -179,7 +184,7 @@ export class Engine {
     return out;
   }
 
-  #upsert(adapter, inst, it, at, bootstrap, out, complete) {
+  #upsert(adapter, inst, it, at, bootstrap, out, complete, live) {
     const title = clean(it.title);
     const company = clean(it.company || inst.company);
     if (!title || !company) return null;
@@ -256,6 +261,17 @@ export class Engine {
     if (JSON.stringify([j.t, j.u, j.l, j.pa, j.cm, j.sp, j.c]) !== before) this.changed = true;
 
     const se = j.src[adapter.id];
+    if (live) {
+      // `lv` = when it went up on the employer's board. A brief drop-out is a flaky poll, not a reopen;
+      // a job already listed on another of the employer's systems isn't fresh just because it was mirrored.
+      const reopened = se && se.o !== 1 && at - (se.ca || 0) >= REOPEN_GAP;
+      const elsewhere = Object.entries(j.src).some(([id, s]) => id !== adapter.id && s.o === 1 && this.adapters.get(id)?.direct);
+      if (!elsewhere && (!se || reopened)) {
+        j.lv = at;
+        if (reopened) out.added.push(j.id);
+        this.changed = true;
+      }
+    }
     if (!se) {
       j.src[adapter.id] = { i: inst.key, fs: at, ls: at, o: 1 };
       this.changed = true;

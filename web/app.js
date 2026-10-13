@@ -177,7 +177,7 @@ function ingest(jobs, health) {
   S.health = health;
   S.alias = health.alias || {};
   S.labels = Object.fromEntries((health.sources || []).map((s) => [s.id, s.label]));
-  S.maxFs = Math.max(0, ...jobs.map((j) => j.fs || 0));
+  S.maxFs = Math.max(0, ...jobs.map((j) => Math.max(j.fs || 0, j.lv || 0)));
   for (const j of jobs) {
     j._t = freshTime(j);
     j._cats = j.k || [];
@@ -190,7 +190,11 @@ function ingest(jobs, health) {
   }
   // New arrivals while the page is open: flash + optional desktop notification.
   if (prevMax && prevIds.size) {
-    const fresh = jobs.filter((j) => !prevIds.has(j.id) && !j.b && j.fs > prevMax - MIN && matches(j));
+    const fresh = jobs.filter((j) => {
+      const prev = prevIds.get(j.id);
+      const t = j.lv && j.lv !== prev?.lv ? j.lv : !prev && !j.b ? j.fs : 0;
+      return t > prevMax - MIN && matches(j);
+    });
     if (fresh.length) {
       S.flash = new Set(fresh.map((j) => j.id));
       notifyNew(fresh);
@@ -198,21 +202,27 @@ function ingest(jobs, health) {
   }
 }
 
-const dateOnly = (t) => t != null && t % DAY === 0; // sources that only publish a posting date
+// Sources that only publish a posting date store it at 00:00 or 12:00 UTC.
+const dateOnly = (t) => t != null && (t % DAY === 0 || t % DAY === 12 * HOUR);
+// Baseline job whose only age signal is a posting date: show the date, never a countdown.
+const dayAged = (j) => !j.lv && j.b && dateOnly(j.pa);
 function freshTime(j) {
+  // Went up on the employer's own board while the radar watched it. That beats any "posted" date:
+  // reposts and reopens keep their original one (Greenhouse first_published can be years old).
+  if (j.lv) return j.lv;
   // Seen live by the radar: first-seen is the real appearance time, unless the posting is clearly older.
   if (!j.b) return j.pa && j.fs - j.pa > (dateOnly(j.pa) ? 36 * HOUR : 2 * HOUR) ? j.pa : j.fs;
   return j.pa ?? null;
 }
 /** Time left in the 8-hour apply window, or 0 once it has passed / age is unknown. */
 function windowLeft(j) {
-  if (j._t == null || j.st !== 'open' || (j.b && dateOnly(j.pa))) return 0;
+  if (j._t == null || j.st !== 'open' || dayAged(j)) return 0;
   const left = APPLY_WINDOW - (Date.now() - j._t);
   return left > 0 ? left : 0;
 }
 function ageLabel(j) {
   if (j._t == null) return '—';
-  if (j.b && dateOnly(j.pa)) {
+  if (dayAged(j)) {
     const d = Math.floor((Date.now() - j.pa) / DAY);
     return d <= 0 ? 'today' : `${d}d`;
   }
@@ -273,7 +283,7 @@ function visibleJobs() {
   return out;
 }
 const tierRank = (j) => (j.tr === 'S' ? 0 : j.tr === 'A' ? 1 : 2);
-const isNew = (j) => !j.b && j.fs > S.seenAt && !S.tracker.opened[j.id] && !trackItem(j.id);
+const isNew = (j) => (j.lv > S.seenAt || (!j.b && j.fs > S.seenAt)) && !S.tracker.opened[j.id] && !trackItem(j.id);
 
 // ---------- rendering: shell ----------
 function setTab(tab) {
@@ -357,14 +367,14 @@ const srcLabel = (id) => S.labels[id] || id;
 
 function rowHtml(j, i) {
   const it = trackItem(j.id);
-  const fresh = j._t != null && !(j.b && dateOnly(j.pa)) && Date.now() - j._t < HOUR;
+  const fresh = j._t != null && !dayAged(j) && Date.now() - j._t < HOUR;
   const left = windowLeft(j);
   const nw = isNew(j);
   const pay = payFor(j);
   const lead = leadFor(j);
   const firstSrc = j._srcs[0]?.[0];
-  const ageBasis = j._t == null ? 'age unknown' : j.pa && j.pa <= j.fs ? 'posted' : 'seen';
-  const title = `First seen ${fmtDate(j.fs)}${j.pa ? ` · posted ${fmtDate(j.pa)}` : ''}${j.b ? ' · already open when the radar started watching' : ''}`;
+  const ageBasis = j._t == null ? 'age unknown' : j.lv ? 'went up' : j.pa && j.pa <= j.fs ? 'posted' : 'seen';
+  const title = `First seen ${fmtDate(j.fs)}${j.lv ? ` · went up on the employer's board ${fmtDate(j.lv)}` : ''}${j.pa ? ` · posted ${fmtDate(j.pa)}` : ''}${j.b && !j.lv ? ' · already open when the radar started watching' : ''}`;
   const cls = ['row', nw && 'new', j.st !== 'open' && 'closed', i === S.sel && 'sel', S.flash?.has(j.id) && 'flash'].filter(Boolean).join(' ');
   return `<div class="${cls}" data-id="${esc(j.id)}" role="listitem">
     <div class="r-main">
@@ -535,6 +545,7 @@ function openJob(id) {
       <dt>Locations</dt><dd>${esc((j.l || []).join(' · ') || '—')}</dd>
       <dt>Posted</dt><dd>${j.pa ? `${fmtDate(j.pa)} <span class="muted">(${ago(j.pa)} ago)</span>` : '<span class="muted">not published by the source</span>'}</dd>
       <dt>First seen</dt><dd>${j.b ? '<span class="muted">already open when the radar started watching</span>' : `${fmtDate(j.fs)} <span class="muted">(${agoText(j.fs)})</span>`}</dd>
+      ${j.lv && j.lv !== j.fs ? `<dt>Went up</dt><dd>${fmtDate(j.lv)} <span class="muted">(${agoText(j.lv)}, on the employer's board)</span></dd>` : ''}
       ${j.st !== 'open' ? `<dt>Closed</dt><dd>${fmtDate(j.ca)}</dd>` : ''}
       ${j.sp ? `<dt>Sponsorship</dt><dd>${esc(j.sp)}</dd>` : ''}
       <dt>Radar id</dt><dd class="mono muted">${esc(j.id)}</dd>

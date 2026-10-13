@@ -68,7 +68,40 @@ assert.equal(e.jobs.has('url:linkedin.com/jobs/view/222'), false);
 assert.ok(e.jobs.get('gh:999').src.linkedin && e.jobs.get('gh:999').src.gh);
 assert.equal(e.alias['url:linkedin.com/jobs/view/222'], 'gh:999');
 
-// 9. serialization round-trip
+// 9. reposts/reopens under an old id (Databricks reopening a 2023 Greenhouse req): the board appearance
+//    time `lv` is recorded, so the UI doesn't date it by the stale first_published.
+const gd = { key: 'gh:db', company: 'Databricks' };
+const dbJob = (id, title, postedAt) => ({ ...job(id, title), postedAt });
+const old = '2023-08-04T16:18:00Z';
+tick(2); poll(A, gd, [dbJob(50, 'Software Engineering Intern (2027) - London', old)]); // bootstrap
+assert.equal(e.jobs.get('gh:50').lv, undefined, 'bootstrap is never "went up now"');
+tick(2); r = poll(A, gd, [dbJob(50, 'Software Engineering Intern (2027) - London', old), dbJob(51, 'Software Engineering Intern (2027)', old)]);
+assert.deepEqual(r.added, ['gh:51']);
+assert.equal(e.jobs.get('gh:51').lv, now, 'appeared on a continuously watched board');
+assert.equal(e.jobs.get('gh:51').pa, Date.parse(old), 'the source date is still kept');
+const lv51 = now;
+tick(2); poll(A, gd, [dbJob(50, 'Software Engineering Intern (2027) - London', old), dbJob(51, 'Software Engineering Intern (2027)', old)]);
+assert.equal(e.jobs.get('gh:51').lv, lv51, 'staying listed keeps the appearance time');
+// a flaky drop-out for a few minutes is not a reopen
+tick(2); poll(A, gd, [dbJob(51, 'Software Engineering Intern (2027)', old)]);
+tick(2); poll(A, gd, [dbJob(50, 'Software Engineering Intern (2027) - London', old), dbJob(51, 'Software Engineering Intern (2027)', old)]);
+assert.equal(e.jobs.get('gh:50').lv, undefined, 'short flap');
+// gone for a day, then back: reopened, and reported as new
+tick(2); poll(A, gd, [dbJob(51, 'Software Engineering Intern (2027)', old)]);
+tick(25 * 60); poll(A, gd, [dbJob(51, 'Software Engineering Intern (2027)', old)]);
+tick(2); r = poll(A, gd, [dbJob(50, 'Software Engineering Intern (2027) - London', old), dbJob(51, 'Software Engineering Intern (2027)', old)]);
+assert.equal(e.jobs.get('gh:50').lv, now, 'reopened after a day');
+assert.deepEqual(r.added, ['gh:50']);
+// a board the radar couldn't reach for hours can't time what appeared meanwhile
+tick(5 * 60); poll(A, gd, [dbJob(50, 'Software Engineering Intern (2027) - London', old), dbJob(51, 'Software Engineering Intern (2027)', old), dbJob(52, 'ML Intern', old)]);
+assert.equal(e.jobs.get('gh:52').lv, undefined, 'gap in coverage');
+// partial (relevance-ranked) listings resurface old postings: never trusted for appearance time
+const pi = { key: 'phenom:db', company: 'Databricks' };
+tick(2); poll(D, pi, [{ sid: 'phenom:db:1', title: 'Data Intern', url: 'https://x.com/1', locations: ['SF'] }], false);
+tick(2); poll(D, pi, [{ sid: 'phenom:db:1', title: 'Data Intern', url: 'https://x.com/1', locations: ['SF'] }, { sid: 'phenom:db:2', title: 'Infra Intern', url: 'https://x.com/2', locations: ['SF'] }], false);
+assert.equal(e.jobs.get('phenom:db:2').lv, undefined, 'incomplete poll');
+
+// 10. serialization round-trip
 const files = e.serialize({ runner: 'test' });
 const e2 = new Engine({ adapters, canon, config: { minStart: '2026-11' }, now: () => now });
 e2.load(JSON.parse(files['jobs.json']), JSON.parse(files['health.json']), JSON.parse(files['instances.json']));
